@@ -13,7 +13,7 @@ This system is designed for local, offline-first store management. It allows use
 - view store summaries and reports
 - authenticate with a local app login/signup flow
 
-The application uses Expo + React Native with file-based routing via expo-router.
+The application uses Expo and React Native with file-based routing via `expo-router`.
 
 ## System Structure
 
@@ -33,26 +33,31 @@ The application uses Expo + React Native with file-based routing via expo-router
 ## Core Features
 
 ### 1. User Authentication
+
 - Users can sign up with a phone number and PIN.
 - Unauthenticated users are redirected to the login screen.
 - Auth state is managed through `AuthContext`.
 
 ### 2. Debtor Management
-- Add debtors with names, contact numbers, addresses, and notes.
+
+- Add debtors with names, contact numbers, addresses, notes, credit limits, and ID photos.
 - Track balances based on credit and payment transactions.
-- View specific debtor records, add payments, and log credit sales.
+- View debtor records, add payments, and log credit sales.
 
 ### 3. Inventory Monitoring
+
 - Add and update products.
-- Track stock quantity and low-stock thresholds.
+- Track stock quantities and low-stock thresholds.
 - Adjust inventory after sales or manual changes.
 
 ### 4. Sales and Payment Flow
+
 - Sell products through a checkout process.
 - Support cash and credit sales.
-- Automatically update inventory and debtor balances.
+- Automatically update inventory and debtor balances for credit sales.
 
 ### 5. Reporting
+
 - Show daily sales summaries.
 - Display recent transactions and unpaid balances.
 - Flag low-stock inventory items.
@@ -60,79 +65,74 @@ The application uses Expo + React Native with file-based routing via expo-router
 ## Tech Stack
 
 - React Native
-- Expo
-- expo-router
-- expo-sqlite
+- Expo SDK 57
+- `expo-router`
+- `expo-sqlite`
 - AsyncStorage
 - JavaScript
 
 ## Project Structure
 
+The following structure reflects the current JavaScript implementation in this repository:
+
 ```text
-CCE106-Final-Project/
-├── app/
-│   ├── _layout.js
-│   ├── index.js
-│   ├── login.js
-│   ├── signup.js
-│   ├── profile.js
-│   ├── settings.js
-│   ├── home/
-│   │   ├── index.js
-│   │   └── dashboard.js
-│   ├── debtors/
-│   │   ├── _layout.js
-│   │   ├── index.js
-│   │   ├── new.js
-│   │   ├── [id].js
-│   │   ├── add-credit.js
-│   │   ├── add-payment.js
-│   │   └── edit.js
-│   ├── inventory/
-│   │   ├── _layout.js
-│   │   ├── index.js
-│   │   ├── new.js
-│   │   └── [id].js
-│   ├── reports/
-│   │   └── index.js
-│   ├── sell/
-│   │   ├── _layout.js
-│   │   ├── index.js
-│   │   └── checkout.js
-│   └── navigation/
-│       └── AppNavigator.js
-├── context/
-│   └── AuthContext.js
-├── constants/
-│   └── theme.js
-├── db/
-│   └── database.js
-├── assets/
-├── app.json
-├── babel.config.js
-├── eslint.config.js
-├── expo-env.d.js
-├── jsconfig.json
-├── metro.config.js
-├── package.json
-├── package-lock.json
-├── README.md
-└── .gitignore
+app/
+  _layout.js             Root layout: wraps the app in SQLiteProvider and AuthProvider
+  index.js               Entry route: redirects to the dashboard
+  login.js               User login screen
+  signup.js              User registration screen
+  profile.js             Store profile screen
+  settings.js            Application settings screen
+  home/
+    index.js             Home route entry
+    dashboard.js         Dashboard with store statistics and recent activity
+  debtors/
+    _layout.js            Debtor route layout
+    index.js              Debtor list with balances and search
+    new.js                Add debtor profile
+    [id].js               Debtor detail, balance, and transaction history
+    add-credit.js         Log a credit sale for a debtor
+    add-payment.js        Record a debtor payment
+    edit.js               Edit debtor profile
+  inventory/
+    _layout.js            Inventory route layout
+    index.js              Product list with stock information
+    new.js                Add a product
+    [id].js               Edit product and adjust stock
+  sell/
+    _layout.js            Sales route layout
+    index.js              Product selection and shopping cart
+    checkout.js           Cash or credit sale checkout
+  reports/
+    index.js              Sales, payment, unpaid balance, and low-stock reports
+  navigation/
+    AppNavigator.js       Navigation entry component
+context/
+  AuthContext.js           Authentication state and user session management
+constants/
+  theme.js                Application colors and shared theme values
+db/
+  database.js             SQLite schema, migrations, and database queries
+components/                Shared user-interface components
+assets/                    Application images, icons, and splash assets
+app.json                   Expo application configuration
+package.json               Project dependencies and npm scripts
 ```
 
 ## Database and Data Model
 
-The app uses a local SQLite database created and migrated by `db/database.js`.
+The app uses a local SQLite database named `store.db`, created and migrated by `db/database.js`.
 
 Main tables include:
 
 - `users` — app users and store profile data
 - `debtors` — customer debtor records
 - `products` — inventory products
-- `transactions` — debt credit/payment history
-- `sales` and `sale_items` — completed sales records
+- `transactions` — credit and payment history
+- `sales` — completed cash and credit sales
+- `sale_items` — products included in each sale
 
-The balance for each debtor is computed from the transaction history rather than stored as a redundant value, helping prevent data drift.
+A debtor's balance is calculated from credit and payment transactions rather than stored as a separate value. This helps prevent balance data from becoming out of sync.
 
 ## Getting Started
 
@@ -140,7 +140,7 @@ The balance for each debtor is computed from the transaction history rather than
 
 - Node.js
 - npm
-- Expo Go or an emulator/simulator
+- Expo Go or an Android/iOS emulator or simulator
 
 ### Installation
 
@@ -154,19 +154,20 @@ npm install
 npx expo start
 ```
 
-Then run the app in Expo Go or a simulator.
+You can then scan the QR code with Expo Go or launch the project in a simulator.
 
 ## App Flow
 
-1. User opens the app.
-2. If not authenticated, they are redirected to `login`.
-3. After login, the app redirects to the dashboard.
-4. From the dashboard, users can navigate to debtors, inventory, sales, reports, settings, or profile.
-5. Sales and transactions are saved locally in SQLite.
+1. The user opens the app.
+2. Unauthenticated users are redirected to `login`.
+3. New users can register through `signup`.
+4. Authenticated users are redirected to `home/dashboard`.
+5. Users can manage debtors, inventory, sales, reports, settings, and their profile.
+6. Sales and transactions are saved locally in SQLite.
 
 ## Notes
 
-This project is intentionally offline-first and local-first. It does not rely on a remote backend service for core operations.
+This project is intentionally offline-first and local-first. Core operations do not require a remote backend service.
 
 ---
 
