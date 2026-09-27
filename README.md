@@ -1,94 +1,173 @@
-# Track&Tally
+# Track & Tally
 
-A lightweight, cross-platform mobile app for sari-sari stores and other small
-businesses to track customer credit ("utang"), payments, and inventory —
-built with **React Native + Expo SDK 57** and **expo-router**.
+Track & Tally is a mobile commerce and credit-tracking app built for sari-sari stores and small retail businesses. It helps owners manage customer debts, cash and credit sales, inventory, and daily store performance directly on-device using SQLite.
 
-## Features (mapped to the project's specific objectives)
+## Overview
 
-| Objective | Where it lives |
-|---|---|
-| Debtor profile module | `app/debtors/new.tsx`, `app/debtors/[id].tsx` — name, contact, address, notes |
-| Automated debt tracking with running balances & history | `db/database.ts` (`addCreditTransaction`, `getDebtor` balance query), `app/debtors/add-credit.tsx`, `app/debtors/[id].tsx` |
-| Payment processing (partial & full) | `app/debtors/add-payment.tsx`, with "pay full balance" / "pay half" shortcuts |
-| Inventory monitoring (stock, unit price, catalog) | `app/inventory/*` |
-| Dynamic reporting (daily sales, unpaid balances, transaction history) | `app/reports/index.tsx`, `app/index.tsx` (dashboard) |
+This system is designed for local, offline-first store management. It allows users to:
 
-## Tech stack
+- create and manage customer debt records
+- log credit sales and payments
+- track inventory levels and low-stock alerts
+- sell products through a checkout flow
+- view store summaries and reports
+- authenticate with a local app login/signup flow
 
-- **Expo SDK 57** (React Native 0.86, React 19.2)
-- **expo-router** for file-based navigation (stacks + modals)
-- **expo-sqlite** for an on-device relational database — all data is local,
-  offline-first, and survives app restarts
-- **TypeScript** throughout
-- No backend required — everything runs on the device
+The application uses Expo + React Native with file-based routing via expo-router.
 
-## Project structure
+## System Structure
 
+| Module | Purpose | Key files |
+|---|---|---|
+| Authentication | App login, signup, and session protection | `app/login.js`, `app/signup.js`, `context/AuthContext.js`, `app/_layout.js` |
+| Dashboard | Main landing screen after login | `app/index.js`, `app/home/index.js`, `app/home/dashboard.js` |
+| Debtors | Maintain debtor profiles and transactions | `app/debtors/index.js`, `app/debtors/new.js`, `app/debtors/[id].js`, `app/debtors/add-credit.js`, `app/debtors/add-payment.js`, `app/debtors/edit.js` |
+| Inventory | Product catalog and stock management | `app/inventory/index.js`, `app/inventory/new.js`, `app/inventory/[id].js` |
+| Sales | Product checkout and payment flow | `app/sell/index.js`, `app/sell/checkout.js`, `app/sell/_layout.js` |
+| Reports | Daily sales and account summaries | `app/reports/index.js` |
+| Profile & Settings | Store profile and preferences | `app/profile.js`, `app/settings.js` |
+| Data layer | Local database schema and queries | `db/database.js` |
+| Theme | Brand styling and color constants | `constants/theme.js` |
+| Navigation | Route setup and navigation entry | `app/navigation/AppNavigator.js` |
+
+## Core Features
+
+### 1. User Authentication
+- Users can sign up with a phone number and PIN.
+- Unauthenticated users are redirected to the login screen.
+- Auth state is managed through `AuthContext`.
+
+### 2. Debtor Management
+- Add debtors with names, contact numbers, addresses, and notes.
+- Track balances based on credit and payment transactions.
+- View specific debtor records, add payments, and log credit sales.
+
+### 3. Inventory Monitoring
+- Add and update products.
+- Track stock quantity and low-stock thresholds.
+- Adjust inventory after sales or manual changes.
+
+### 4. Sales and Payment Flow
+- Sell products through a checkout process.
+- Support cash and credit sales.
+- Automatically update inventory and debtor balances.
+
+### 5. Reporting
+- Show daily sales summaries.
+- Display recent transactions and unpaid balances.
+- Flag low-stock inventory items.
+
+## Tech Stack
+
+- React Native
+- Expo
+- expo-router
+- expo-sqlite
+- AsyncStorage
+- JavaScript
+
+## Project Structure
+
+```text
+CCE106-Final-Project/
+├── app/
+│   ├── _layout.js
+│   ├── index.js
+│   ├── login.js
+│   ├── signup.js
+│   ├── profile.js
+│   ├── settings.js
+│   ├── home/
+│   │   ├── index.js
+│   │   └── dashboard.js
+│   ├── debtors/
+│   │   ├── _layout.js
+│   │   ├── index.js
+│   │   ├── new.js
+│   │   ├── [id].js
+│   │   ├── add-credit.js
+│   │   ├── add-payment.js
+│   │   └── edit.js
+│   ├── inventory/
+│   │   ├── _layout.js
+│   │   ├── index.js
+│   │   ├── new.js
+│   │   └── [id].js
+│   ├── reports/
+│   │   └── index.js
+│   ├── sell/
+│   │   ├── _layout.js
+│   │   ├── index.js
+│   │   └── checkout.js
+│   └── navigation/
+│       └── AppNavigator.js
+├── context/
+│   └── AuthContext.js
+├── constants/
+│   └── theme.js
+├── db/
+│   └── database.js
+├── assets/
+├── app.json
+├── babel.config.js
+├── eslint.config.js
+├── expo-env.d.js
+├── jsconfig.json
+├── metro.config.js
+├── package.json
+├── package-lock.json
+├── README.md
+└── .gitignore
 ```
-app/
-  _layout.tsx          Root layout: wraps the app in <SQLiteProvider>
-  index.tsx             Dashboard (stats + quick actions + recent activity)
-  debtors/
-    index.tsx            Debtor list with live balances + search
-    new.tsx               Add debtor profile (modal)
-    [id].tsx               Debtor detail: balance, profile, transaction history
-    add-credit.tsx        Log a credit sale (modal, optional product link)
-    add-payment.tsx       Record a partial/full payment (modal)
-  inventory/
-    index.tsx            Product grid with stock + low-stock badges
-    new.tsx                Add product (modal)
-    [id].tsx                Edit product / adjust stock (modal)
-  reports/
-    index.tsx            Daily sales, unpaid balances, low-stock tabs
-db/
-  database.ts           SQLite schema + all queries (single source of truth)
-components/              Shared UI: Card, Button, StatBox, EmptyState
-constants/theme.ts        Navy + gold color system matching the brand mark
-lib/format.ts              Currency (₱) and date formatting helpers
-types/index.ts             Shared TypeScript types
+
+## Database and Data Model
+
+The app uses a local SQLite database created and migrated by `db/database.js`.
+
+Main tables include:
+
+- `users` — app users and store profile data
+- `debtors` — customer debtor records
+- `products` — inventory products
+- `transactions` — debt credit/payment history
+- `sales` and `sale_items` — completed sales records
+
+The balance for each debtor is computed from the transaction history rather than stored as a redundant value, helping prevent data drift.
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js
+- npm
+- Expo Go or an emulator/simulator
+
+### Installation
+
+```bash
+npm install
 ```
 
-## How the data model works
+### Start the app
 
-- **debtors** — one row per customer.
-- **products** — the store's catalog (name, unit price, stock, low-stock threshold).
-- **transactions** — every credit sale (`type = 'credit'`) or payment
-  (`type = 'payment'`) tied to a debtor. A debtor's balance is *never*
-  stored directly — it's always computed as
-  `SUM(credit) - SUM(payment)`, so it can never drift out of sync.
-- Logging a credit sale linked to a product automatically decrements that
-  product's `stock_quantity` inside the same SQLite transaction.
+```bash
+npx expo start
+```
 
-## Getting started
+Then run the app in Expo Go or a simulator.
 
-1. **Install prerequisites**
-   - Node.js 22.13+ (required by Expo SDK 57)
-   - The [Expo Go](https://expo.dev/go) app on your phone, *or* an
-     Android/iOS simulator
+## App Flow
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+1. User opens the app.
+2. If not authenticated, they are redirected to `login`.
+3. After login, the app redirects to the dashboard.
+4. From the dashboard, users can navigate to debtors, inventory, sales, reports, settings, or profile.
+5. Sales and transactions are saved locally in SQLite.
 
-3. **Start the dev server**
-   ```bash
-   npx expo start
-   ```
-   Scan the QR code with Expo Go (Android) or the Camera app (iOS), or
-   press `a` / `i` to launch a simulator.
+## Notes
 
-4. **First run** — the SQLite database and tables are created automatically
-   the first time the app launches (see `db/database.ts` →
-   `migrateDbIfNeeded`). No manual setup needed.
+This project is intentionally offline-first and local-first. It does not rely on a remote backend service for core operations.
 
-## Suggested next steps
+---
 
-- Add authentication/PIN lock for the store owner (`expo-local-authentication`).
-- Add CSV/PDF export for reports (`expo-print` / `expo-sharing`).
-- Add barcode scanning for faster product lookup at checkout (`expo-camera`).
-- Add push/local notifications for low-stock or overdue-balance alerts
-  (`expo-notifications`).
-- Replace the placeholder icon/splash images in `assets/` with the final
-  Track&Tally logo assets at 1024×1024 (icon) and appropriate splash sizes.
+Track & Tally is a practical business management app for local store operations, built to keep daily transactions, debt records, and inventory organized on a single mobile platform.
