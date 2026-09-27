@@ -73,50 +73,28 @@ The application uses Expo and React Native with file-based routing via `expo-rou
 
 ## Project Structure
 
-The following structure reflects the current JavaScript implementation in this repository:
-
 ```text
 app/
-  _layout.js             Root layout: wraps the app in SQLiteProvider and AuthProvider
-  index.js               Entry route: redirects to the dashboard
-  login.js               User login screen
-  signup.js              User registration screen
-  profile.js             Store profile screen
-  settings.js            Application settings screen
-  home/
-    index.js             Home route entry
-    dashboard.js         Dashboard with store statistics and recent activity
+  _layout.tsx          Root layout: wraps the app in <SQLiteProvider>
+  index.tsx             Dashboard (stats + quick actions + recent activity)
   debtors/
-    _layout.js            Debtor route layout
-    index.js              Debtor list with balances and search
-    new.js                Add debtor profile
-    [id].js               Debtor detail, balance, and transaction history
-    add-credit.js         Log a credit sale for a debtor
-    add-payment.js        Record a debtor payment
-    edit.js               Edit debtor profile
+    index.tsx            Debtor list with live balances + search
+    new.tsx               Add debtor profile (modal)
+    [id].tsx               Debtor detail: balance, profile, transaction history
+    add-credit.tsx        Log a credit sale (modal, optional product link)
+    add-payment.tsx       Record a partial/full payment (modal)
   inventory/
-    _layout.js            Inventory route layout
-    index.js              Product list with stock information
-    new.js                Add a product
-    [id].js               Edit product and adjust stock
-  sell/
-    _layout.js            Sales route layout
-    index.js              Product selection and shopping cart
-    checkout.js           Cash or credit sale checkout
+    index.tsx            Product grid with stock + low-stock badges
+    new.tsx                Add product (modal)
+    [id].tsx                Edit product / adjust stock (modal)
   reports/
-    index.js              Sales, payment, unpaid balance, and low-stock reports
-  navigation/
-    AppNavigator.js       Navigation entry component
-context/
-  AuthContext.js           Authentication state and user session management
-constants/
-  theme.js                Application colors and shared theme values
+    index.tsx            Daily sales, unpaid balances, low-stock tabs
 db/
-  database.js             SQLite schema, migrations, and database queries
-components/                Shared user-interface components
-assets/                    Application images, icons, and splash assets
-app.json                   Expo application configuration
-package.json               Project dependencies and npm scripts
+  database.ts           SQLite schema + all queries (single source of truth)
+components/              Shared UI: Card, Button, StatBox, EmptyState
+constants/theme.ts        Navy + gold color system matching the brand mark
+lib/format.ts              Currency (₱) and date formatting helpers
+types/index.ts             Shared TypeScript types
 ```
 
 ## Database and Data Model
