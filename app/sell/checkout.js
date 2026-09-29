@@ -20,6 +20,7 @@ import { colors, spacing, typography, radius } from "@/constants/theme";
 import { formatCurrency } from "@/lib/format";
 import { createSale, getDebtorOptions } from "@/db/database";
 import { useAuth } from "@/context/AuthContext";
+import { getSalePricing } from "@/lib/inventory";
 
 export default function CheckoutScreen() {
   const { cart } = useLocalSearchParams();
@@ -51,7 +52,7 @@ export default function CheckoutScreen() {
 
   const total = cartItems.reduce(
     (sum, item) =>
-      sum + item.quantity * item.product.unit_price,
+      sum + item.quantity * getSalePricing(item.product, item.saleMode).unitPrice,
     0
   );
 
@@ -200,9 +201,9 @@ export default function CheckoutScreen() {
 
                   <Text style={styles.itemUnitPrice}>
                     {formatCurrency(
-                      item.product.unit_price
+                      getSalePricing(item.product, item.saleMode).unitPrice
                     )}{" "}
-                    each
+                    per {getSalePricing(item.product, item.saleMode).label}
                   </Text>
                 </View>
               </View>
@@ -210,7 +211,7 @@ export default function CheckoutScreen() {
               <Text style={styles.itemTotal}>
                 {formatCurrency(
                   item.quantity *
-                    item.product.unit_price
+                    getSalePricing(item.product, item.saleMode).unitPrice
                 )}
               </Text>
             </View>
@@ -732,11 +733,11 @@ export default function CheckoutScreen() {
                         {item.product.name}
                       </Text>
                       <Text style={styles.receiptItemDetail}>
-                        {item.quantity} x {formatCurrency(item.product.unit_price)}
+                        {item.quantity} x {formatCurrency(getSalePricing(item.product, item.saleMode).unitPrice)}
                       </Text>
                     </View>
                     <Text style={styles.receiptItemTotal}>
-                      {formatCurrency(item.quantity * item.product.unit_price)}
+                      {formatCurrency(item.quantity * getSalePricing(item.product, item.saleMode).unitPrice)}
                     </Text>
                   </View>
                 ))}

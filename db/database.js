@@ -1,4 +1,4 @@
-const DB_VERSION = 13;
+const DB_VERSION = 14;
 
 function requireUserId(userId) {
   const id = Number(userId);
@@ -6,6 +6,12 @@ function requireUserId(userId) {
     throw new Error("An active user is required to access store data.");
   }
   return id;
+}
+
+function requireWholePieces(unit, quantity, label = "Quantity") {
+  if (unit === "piece" && !Number.isInteger(Number(quantity))) {
+    throw new Error(`${label} for products sold by the piece must be a whole item.`);
+  }
 }
 
 /**
@@ -106,6 +112,12 @@ async function ensureProductUnitColumn(db) {
 async function ensureProductMeasurementValueColumn(db) {
   if (!(await tableColumnExists(db, "products", "measurement_value"))) {
     await db.execAsync(`ALTER TABLE products ADD COLUMN measurement_value REAL;`);
+  }
+}
+
+async function ensureProductItemPriceColumn(db) {
+  if (!(await tableColumnExists(db, "products", "item_price"))) {
+    await db.execAsync(`ALTER TABLE products ADD COLUMN item_price REAL;`);
   }
 }
 
@@ -211,6 +223,7 @@ export async function migrateDbIfNeeded(db) {
         unit TEXT NOT NULL DEFAULT 'piece',
         measurement_value REAL,
         unit_price REAL NOT NULL DEFAULT 0,
+        item_price REAL,
         stock_quantity INTEGER NOT NULL DEFAULT 0,
         low_stock_threshold INTEGER NOT NULL DEFAULT 5,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -297,6 +310,11 @@ export async function migrateDbIfNeeded(db) {
   if (currentVersion < 13) {
     await ensureProductMeasurementValueColumn(db);
     currentVersion = 13;
+  }
+
+  if (currentVersion < 14) {
+    await ensureProductItemPriceColumn(db);
+    currentVersion = 14;
   }
 
   await db.execAsync(`PRAGMA user_version = ${DB_VERSION}`);
@@ -399,6 +417,7 @@ export async function addCreditTransaction(db, userId, params) {
     if (params.productId) {
       const product = await getProduct(db, ownerId, params.productId);
       if (!product) throw new Error("Product not found for this user.");
+      requireWholePieces(product.unit ?? "piece", params.quantity);
     }
     await db.runAsync(
       `INSERT INTO transactions (user_id, debtor_id, type, amount, description, product_id, quantity) VALUES (?, ?, 'credit', ?, ?, ?, ?)`,
@@ -460,15 +479,18 @@ export async function getProduct(db, userId, id) {
 
 export async function createProduct(db, userId, data) {
   const ownerId = requireUserId(userId);
+  const unit = data.unit ?? "piece";
+  requireWholePieces(unit, data.stock_quantity, "Stock quantity");
   const res = await db.runAsync(
-    `INSERT INTO products (user_id, name, category, unit, measurement_value, unit_price, stock_quantity, low_stock_threshold) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO products (user_id, name, category, unit, measurement_value, unit_price, item_price, stock_quantity, low_stock_threshold) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       ownerId,
       data.name,
       data.category,
-      data.unit ?? "piece",
+      unit,
       data.measurement_value ?? null,
       data.unit_price,
+      data.item_price ?? null,
       data.stock_quantity,
       data.low_stock_threshold,
     ]
@@ -478,14 +500,17 @@ export async function createProduct(db, userId, data) {
 
 export async function updateProduct(db, userId, id, data) {
   const ownerId = requireUserId(userId);
+  const unit = data.unit ?? "piece";
+  requireWholePieces(unit, data.stock_quantity, "Stock quantity");
   await db.runAsync(
-    `UPDATE products SET name = ?, category = ?, unit = ?, measurement_value = ?, unit_price = ?, stock_quantity = ?, low_stock_threshold = ? WHERE id = ? AND user_id = ?`,
+    `UPDATE products SET name = ?, category = ?, unit = ?, measurement_value = ?, unit_price = ?, item_price = ?, stock_quantity = ?, low_stock_threshold = ? WHERE id = ? AND user_id = ?`,
     [
       data.name,
       data.category,
-      data.unit ?? "piece",
+      unit,
       data.measurement_value ?? null,
       data.unit_price,
+      data.item_price ?? null,
       data.stock_quantity,
       data.low_stock_threshold,
       id, ownerId,
@@ -498,9 +523,13 @@ export async function deleteProduct(db, userId, id) {
 }
 
 export async function adjustStock(db, userId, id, delta) {
+  const ownerId = requireUserId(userId);
+  const product = await getProduct(db, ownerId, id);
+  if (!product) throw new Error("Product not found for this user.");
+  requireWholePieces(product.unit ?? "piece", delta, "Stock adjustment");
   await db.runAsync(
     `UPDATE products SET stock_quantity = MAX(stock_quantity + ?, 0) WHERE id = ? AND user_id = ?`,
-    [delta, id, requireUserId(userId)]
+    [delta, id, ownerId]
   );
 }
 
@@ -511,15 +540,6 @@ export async function createSale(db, userId, { saleType, debtorId = null, items 
   if (!items?.length) {
     throw new Error("Cart is empty.");
   }
-
-  const normalizedItems = items.map((item) => ({
-    product: item.product,
-    quantity: Number(item.quantity) || 0,
-  }));
-  const total = normalizedItems.reduce(
-    (sum, item) => sum + item.quantity * Number(item.product.unit_price),
-    0
-  );
 
   return db.withTransactionAsync(async () => {
     if (saleType === "credit") {
@@ -532,18 +552,31 @@ export async function createSale(db, userId, { saleType, debtorId = null, items 
       }
     }
 
-    for (const item of normalizedItems) {
+    const normalizedItems = [];
+    for (const item of items) {
       const product = await getProduct(db, ownerId, Number(item.product.id));
       if (!product) {
         throw new Error(`${item.product.name} is no longer in inventory.`);
       }
-      if (item.quantity <= 0) {
+      const quantity = Number(item.quantity) || 0;
+      if (quantity <= 0) {
         throw new Error("Quantity must be greater than zero.");
       }
-      if (product.stock_quantity < item.quantity) {
+      const saleMode = item.saleMode === "item" ? "item" : "package";
+      const packageSize = Math.max(1, Math.floor(Number(product.measurement_value) || 1));
+      if (saleMode === "item" && (!product.item_price || packageSize === 1)) {
+        throw new Error(`${product.name} is not available for individual-item sales.`);
+      }
+      const stockItems = saleMode === "item" ? 1 : packageSize;
+      const unitPrice = Number(saleMode === "item" ? product.item_price : product.unit_price) || 0;
+      requireWholePieces(product.unit ?? "piece", quantity * stockItems);
+      if (product.stock_quantity < quantity * stockItems) {
         throw new Error(`${product.name} only has ${product.stock_quantity} left in stock.`);
       }
+      normalizedItems.push({ product, quantity, stockItems, unitPrice });
     }
+
+    const total = normalizedItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
 
     const sale = await db.runAsync(
       `INSERT INTO sales (user_id, debtor_id, sale_type, total_amount) VALUES (?, ?, ?, ?)`,
@@ -556,11 +589,11 @@ export async function createSale(db, userId, { saleType, debtorId = null, items 
       await db.runAsync(
         `INSERT INTO sale_items (user_id, sale_id, product_id, product_name, unit_price, quantity)
          VALUES (?, ?, ?, ?, ?, ?)`,
-        [ownerId, saleId, product.id, product.name, product.unit_price, item.quantity]
+        [ownerId, saleId, product.id, product.name, item.unitPrice, item.quantity]
       );
       await db.runAsync(
         `UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ? AND user_id = ?`,
-        [item.quantity, product.id, ownerId]
+        [item.quantity * item.stockItems, product.id, ownerId]
       );
     }
 

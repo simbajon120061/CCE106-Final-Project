@@ -1,4 +1,4 @@
-
+// index.js
 import { useCallback, useState } from "react";
 import {
   View,
@@ -7,6 +7,7 @@ import {
   FlatList,
   Pressable,
   TextInput,
+  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -19,6 +20,7 @@ import { colors, spacing, radius } from "@/constants/theme";
 import { formatCurrency } from "@/lib/format";
 import { getProducts } from "@/db/database";
 import { useAuth } from "@/context/AuthContext";
+import { canSellByItem, formatStockQuantity, getSalePricing } from "@/lib/inventory";
 
 export default function SellScreen() {
   const db = useSQLiteContext();
@@ -43,21 +45,35 @@ export default function SellScreen() {
     }, [load, query])
   );
 
-  function addToCart(product) {
+  function addToCart(product, saleMode = "package") {
     setCart((current) => {
       const existing = current[product.id];
       const currentQuantity = existing?.quantity || 0;
+      const pricing = getSalePricing(product, saleMode);
 
-      if (currentQuantity + 1 > product.stock_quantity) return current;
+      if ((currentQuantity + 1) * pricing.stockItems > product.stock_quantity) return current;
 
       return {
         ...current,
         [product.id]: {
           product,
           quantity: currentQuantity + 1,
+          saleMode,
         },
       };
     });
+  }
+
+  function chooseSaleMode(product) {
+    const existing = cart[product.id];
+    if (existing) return addToCart(product, existing.saleMode);
+    if (!canSellByItem(product)) return addToCart(product);
+
+    Alert.alert(`Add ${product.name}`, "Choose how to sell this product.", [
+      { text: `Package — ${formatCurrency(product.unit_price)}`, onPress: () => addToCart(product, "package") },
+      { text: `Single item — ${formatCurrency(product.item_price)}`, onPress: () => addToCart(product, "item") },
+      { text: "Cancel", style: "cancel" },
+    ]);
   }
 
   function removeFromCart(productId) {
@@ -91,7 +107,7 @@ export default function SellScreen() {
 
   const cartTotal = cartItems.reduce(
     (sum, item) =>
-      sum + item.quantity * item.product.unit_price,
+      sum + item.quantity * getSalePricing(item.product, item.saleMode).unitPrice,
     0
   );
 
@@ -103,7 +119,11 @@ export default function SellScreen() {
         name: item.product.name,
         unit_price: item.product.unit_price,
         stock_quantity: item.product.stock_quantity,
+        unit: item.product.unit,
+        measurement_value: item.product.measurement_value,
+        item_price: item.product.item_price,
       },
+      saleMode: item.saleMode,
     }));
 
     router.push({
@@ -279,7 +299,7 @@ export default function SellScreen() {
                     >
                       {outOfStock
                         ? "No stock"
-                        : `${item.stock_quantity} in stock`}
+                        : `${formatStockQuantity(item.stock_quantity, item.unit)} in stock`}
                     </Text>
                   </View>
                 </View>
@@ -316,7 +336,7 @@ export default function SellScreen() {
                       atMaxStock &&
                         styles.qtyButtonDisabled,
                     ]}
-                    onPress={() => addToCart(item)}
+                    onPress={() => chooseSaleMode(item)}
                     disabled={atMaxStock}
                   >
                     <Ionicons
@@ -340,7 +360,7 @@ export default function SellScreen() {
                       !outOfStock &&
                       styles.addButtonPressed,
                   ]}
-                  onPress={() => addToCart(item)}
+                  onPress={() => chooseSaleMode(item)}
                   disabled={outOfStock}
                 >
                   <Ionicons

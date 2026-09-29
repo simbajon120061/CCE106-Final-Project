@@ -22,6 +22,7 @@ import {
 } from "@/constants/theme";
 import { formatCurrency } from "@/lib/format";
 import { formatProductUnit } from "@/constants/productUnits";
+import { formatStockQuantity } from "@/lib/inventory";
 import { getProducts } from "@/db/database";
 import { useAuth } from "@/context/AuthContext";
 
@@ -423,7 +424,7 @@ export default function InventoryScreen() {
                           },
                         ]}
                       >
-                        {stock} {stock === 1 ? "item" : "items"}
+                        {formatStockQuantity(stock, item.unit)}
                       </Text>
                     </View>
                   </View>

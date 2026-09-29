@@ -33,6 +33,7 @@ import {
   deleteProduct,
 } from "@/db/database";
 import { useAuth } from "@/context/AuthContext";
+import { formatStockQuantity, stockUnitLabel } from "@/lib/inventory";
 
 export default function EditProductScreen() {
   const { id } = useLocalSearchParams();
@@ -46,6 +47,7 @@ export default function EditProductScreen() {
   const [unit, setUnit] = useState("piece");
   const [measurementValue, setMeasurementValue] = useState("");
   const [price, setPrice] = useState("");
+  const [itemPrice, setItemPrice] = useState("");
   const [stock, setStock] = useState("");
   const [threshold, setThreshold] = useState("");
   const [saving, setSaving] = useState(false);
@@ -62,6 +64,7 @@ export default function EditProductScreen() {
         p.measurement_value == null ? "" : String(p.measurement_value)
       );
       setPrice(String(p.unit_price));
+      setItemPrice(p.item_price == null ? "" : String(p.item_price));
       setStock(String(p.stock_quantity));
       setThreshold(String(p.low_stock_threshold));
     });
@@ -76,6 +79,11 @@ export default function EditProductScreen() {
       return;
     }
 
+    if (unit === "piece" && !Number.isInteger(Number(stock || 0))) {
+      Alert.alert("Invalid stock", "Pieces must be counted as whole items.");
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -86,6 +94,7 @@ export default function EditProductScreen() {
         measurement_value:
           measurementValue === "" ? null : Number(measurementValue) || 0,
         unit_price: Number(price) || 0,
+        item_price: itemPrice === "" ? null : Number(itemPrice) || 0,
         stock_quantity: Number(stock) || 0,
         low_stock_threshold:
           Number(threshold) || 0,
@@ -344,7 +353,7 @@ export default function EditProductScreen() {
             </Field>
 
             <Field
-              label="Unit price (₱) *"
+              label="Package price (₱) *"
               icon="cash-outline"
             >
               <View style={styles.priceWrapper}>
@@ -362,6 +371,26 @@ export default function EditProductScreen() {
                   placeholderTextColor={
                     colors.textMuted
                   }
+                  style={styles.priceInput}
+                />
+              </View>
+            </Field>
+
+            <Field
+              label="Single-item price (₱)"
+              icon="cash-outline"
+            >
+              <View style={styles.priceWrapper}>
+                <View style={styles.currencyBox}>
+                  <Text style={styles.currencyText}>₱</Text>
+                </View>
+
+                <TextInput
+                  value={itemPrice}
+                  onChangeText={setItemPrice}
+                  keyboardType="decimal-pad"
+                  placeholder="Optional: price for one item"
+                  placeholderTextColor={colors.textMuted}
                   style={styles.priceInput}
                 />
               </View>
@@ -393,7 +422,7 @@ export default function EditProductScreen() {
 
           <View style={styles.fieldsCard}>
             <Field
-              label="Stock quantity"
+              label={`Stock quantity (${stockUnitLabel(unit, stockNumber)})`}
               icon="cube-outline"
             >
               <View style={styles.stepperRow}>
@@ -430,7 +459,7 @@ export default function EditProductScreen() {
                   />
 
                   <Text style={styles.stockUnit}>
-                    items
+                    {stockUnitLabel(unit, stockNumber)}
                   </Text>
                 </View>
 
@@ -526,7 +555,7 @@ export default function EditProductScreen() {
                 },
               ]}
             >
-              {stockNumber} {stockNumber === 1 ? "item" : "items"}
+              {formatStockQuantity(stockNumber, unit)}
             </Text>
           </View>
 

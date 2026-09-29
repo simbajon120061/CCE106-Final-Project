@@ -19,6 +19,7 @@ import UnitDropdown from "@/components/UnitDropdown";
 import { colors, spacing, typography, radius } from "@/constants/theme";
 import { createProduct } from "@/db/database";
 import { useAuth } from "@/context/AuthContext";
+import { stockUnitLabel } from "@/lib/inventory";
 
 export default function NewProductScreen() {
   const db = useSQLiteContext();
@@ -30,6 +31,7 @@ export default function NewProductScreen() {
   const [unit, setUnit] = useState("piece");
   const [measurementValue, setMeasurementValue] = useState("");
   const [price, setPrice] = useState("");
+  const [itemPrice, setItemPrice] = useState("");
   const [stock, setStock] = useState("");
   const [threshold, setThreshold] = useState("5");
   const [saving, setSaving] = useState(false);
@@ -43,6 +45,11 @@ export default function NewProductScreen() {
       return;
     }
 
+    if (unit === "piece" && !Number.isInteger(Number(stock || 0))) {
+      Alert.alert("Invalid stock", "Pieces must be counted as whole items.");
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -53,6 +60,7 @@ export default function NewProductScreen() {
         measurement_value:
           measurementValue === "" ? null : Number(measurementValue) || 0,
         unit_price: Number(price) || 0,
+        item_price: itemPrice === "" ? null : Number(itemPrice) || 0,
         stock_quantity: Number(stock) || 0,
         low_stock_threshold: Number(threshold) || 5,
       });
@@ -195,7 +203,7 @@ export default function NewProductScreen() {
             </Field>
 
             <Field
-              label="Unit price (₱) *"
+              label="Package price (₱) *"
               icon="cash-outline"
             >
               <View style={styles.inputWithPrefix}>
@@ -208,6 +216,26 @@ export default function NewProductScreen() {
                   onChangeText={setPrice}
                   keyboardType="decimal-pad"
                   placeholder="0.00"
+                  placeholderTextColor={colors.textMuted}
+                  style={styles.priceInput}
+                />
+              </View>
+            </Field>
+
+            <Field
+              label="Single-item price (₱)"
+              icon="cash-outline"
+            >
+              <View style={styles.inputWithPrefix}>
+                <View style={styles.currencyBox}>
+                  <Text style={styles.currencyText}>₱</Text>
+                </View>
+
+                <TextInput
+                  value={itemPrice}
+                  onChangeText={setItemPrice}
+                  keyboardType="decimal-pad"
+                  placeholder="Optional: price for one item"
                   placeholderTextColor={colors.textMuted}
                   style={styles.priceInput}
                 />
@@ -239,7 +267,7 @@ export default function NewProductScreen() {
 
           <View style={styles.fieldsCard}>
             <Field
-              label="Starting stock quantity"
+              label={`Starting stock quantity (${stockUnitLabel(unit, Number(stock))})`}
               icon="cube-outline"
             >
               <TextInput
