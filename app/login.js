@@ -213,4 +213,4 @@ const styles = StyleSheet.create({
   },
   footerText: { fontSize: 14, color: colors.textMuted },
   linkText: { fontSize: 14, fontWeight: "700", color: colors.navy },
-});
+}); 
