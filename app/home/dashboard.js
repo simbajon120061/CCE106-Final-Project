@@ -11,6 +11,7 @@ import TopHeader from "@/components/TopHeader";
 import { formatCurrency } from "@/lib/format";
 import {
   getDailySalesSummary,
+  getTodayCreditItemCount,
   getLowStockProducts,
   getTotalOutstanding,
 } from "@/db/database";
@@ -50,6 +51,7 @@ export default function DashboardScreen() {
     outstanding: 0,
     itemsSold: 0,
     lowStockCount: 0,
+    lowStockProductId: null,
   });
 
   useFocusEffect(
@@ -61,14 +63,10 @@ export default function DashboardScreen() {
 
         const [summaryRows, outstanding, lowStock, itemRow] =
           await Promise.all([
-            getDailySalesSummary(db, 1),
-            getTotalOutstanding(db),
-            getLowStockProducts(db),
-            db.getFirstAsync(
-              `SELECT COALESCE(SUM(quantity), 0) AS total
-               FROM transactions
-               WHERE type = 'credit' AND date(created_at) = date('now')`
-            ),
+            getDailySalesSummary(db, user?.id, 1),
+            getTotalOutstanding(db, user?.id),
+            getLowStockProducts(db, user?.id),
+            getTodayCreditItemCount(db, user?.id),
           ]);
 
         if (!active) return;
@@ -90,8 +88,9 @@ export default function DashboardScreen() {
           utangSales,
           outstanding,
           itemsSold:
-            todaySummary?.item_count ?? itemRow?.total ?? 0,
+            todaySummary?.item_count ?? itemRow ?? 0,
           lowStockCount: lowStock.length,
+          lowStockProductId: lowStock[0]?.id ?? null,
         });
       }
 
@@ -100,7 +99,7 @@ export default function DashboardScreen() {
       return () => {
         active = false;
       };
-    }, [db])
+    }, [db, user?.id])
   );
 
   const todayLabel = useMemo(
@@ -164,7 +163,11 @@ export default function DashboardScreen() {
               styles.alertBanner,
               pressed && styles.alertPressed,
             ]}
-            onPress={() => router.push("/reports")}
+            onPress={() =>
+              router.push(
+                `/inventory/${stats.lowStockProductId}`
+              )
+            }
           >
             <View style={styles.alertIconContainer}>
               <Ionicons

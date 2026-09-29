@@ -20,6 +20,7 @@ import Button from "@/components/Button";
 import BottomNav, {
   bottomNavHeight,
 } from "@/components/BottomNav";
+import UnitDropdown from "@/components/UnitDropdown";
 import {
   colors,
   spacing,
@@ -31,32 +32,40 @@ import {
   updateProduct,
   deleteProduct,
 } from "@/db/database";
+import { useAuth } from "@/context/AuthContext";
 
 export default function EditProductScreen() {
   const { id } = useLocalSearchParams();
   const db = useSQLiteContext();
   const router = useRouter();
+  const { user } = useAuth();
 
   const [product, setProduct] = useState(null);
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
+  const [unit, setUnit] = useState("piece");
+  const [measurementValue, setMeasurementValue] = useState("");
   const [price, setPrice] = useState("");
   const [stock, setStock] = useState("");
   const [threshold, setThreshold] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    getProduct(db, Number(id)).then((p) => {
+    getProduct(db, user?.id, Number(id)).then((p) => {
       if (!p) return;
 
       setProduct(p);
       setName(p.name);
       setCategory(p.category || "");
+      setUnit(p.unit || "piece");
+      setMeasurementValue(
+        p.measurement_value == null ? "" : String(p.measurement_value)
+      );
       setPrice(String(p.unit_price));
       setStock(String(p.stock_quantity));
       setThreshold(String(p.low_stock_threshold));
     });
-  }, [db, id]);
+  }, [db, id, user?.id]);
 
   async function handleSave() {
     if (!name.trim() || !price) {
@@ -70,9 +79,12 @@ export default function EditProductScreen() {
     setSaving(true);
 
     try {
-      await updateProduct(db, Number(id), {
+      await updateProduct(db, user?.id, Number(id), {
         name: name.trim(),
         category: category.trim() || null,
+        unit,
+        measurement_value:
+          measurementValue === "" ? null : Number(measurementValue) || 0,
         unit_price: Number(price) || 0,
         stock_quantity: Number(stock) || 0,
         low_stock_threshold:
@@ -99,7 +111,7 @@ export default function EditProductScreen() {
           style: "destructive",
           onPress: async () => {
             await deleteProduct(
-              db,
+              db, user?.id,
               Number(id)
             );
             router.back();
@@ -309,6 +321,29 @@ export default function EditProductScreen() {
             </Field>
 
             <Field
+              label="Numerical value"
+              icon="calculator-outline"
+            >
+              <TextInput
+                value={measurementValue}
+                onChangeText={setMeasurementValue}
+                keyboardType="decimal-pad"
+                placeholder="e.g. 500"
+                placeholderTextColor={
+                  colors.textMuted
+                }
+                style={styles.input}
+              />
+            </Field>
+
+            <Field
+              label="Unit of measurement"
+              icon="resize-outline"
+            >
+              <UnitDropdown value={unit} onChange={setUnit} />
+            </Field>
+
+            <Field
               label="Unit price (₱) *"
               icon="cash-outline"
             >
@@ -491,10 +526,7 @@ export default function EditProductScreen() {
                 },
               ]}
             >
-              {stockNumber}{" "}
-              {stockNumber === 1
-                ? "item"
-                : "items"}
+              {stockNumber} {stockNumber === 1 ? "item" : "items"}
             </Text>
           </View>
 

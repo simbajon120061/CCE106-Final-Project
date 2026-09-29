@@ -6,6 +6,7 @@ import {
   ScrollView,
   Pressable,
   Alert,
+  Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useEffect, useState } from "react";
@@ -17,20 +18,28 @@ import BottomNav, { bottomNavHeight } from "@/components/BottomNav";
 import { colors, spacing, typography, radius } from "@/constants/theme";
 import { formatCurrency } from "@/lib/format";
 import { addPaymentTransaction, getDebtor } from "@/db/database";
+import { useAuth } from "@/context/AuthContext";
 
 export default function AddPaymentScreen() {
   const { debtorId } = useLocalSearchParams();
   const db = useSQLiteContext();
   const router = useRouter();
+  const { user } = useAuth();
 
   const [debtor, setDebtor] = useState(null);
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("cash");
+  const [walletProvider, setWalletProvider] = useState("gcash");
+  const [customWallet, setCustomWallet] = useState("");
+  const [paymentReference, setPaymentReference] = useState("");
+  const [methodMenuVisible, setMethodMenuVisible] = useState(false);
+  const [walletMenuVisible, setWalletMenuVisible] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    getDebtor(db, Number(debtorId)).then(setDebtor);
-  }, [db, debtorId]);
+    getDebtor(db, user?.id, Number(debtorId)).then(setDebtor);
+  }, [db, debtorId, user?.id]);
 
   async function handleSave() {
     const amt = Number(amount);
@@ -40,13 +49,31 @@ export default function AddPaymentScreen() {
       return;
     }
 
+    if (paymentMethod === "e_wallet" && walletProvider === "other" && !customWallet.trim()) {
+      Alert.alert("Wallet required", "Enter the name of the e-wallet used.");
+      return;
+    }
+
     setSaving(true);
 
     try {
-      await addPaymentTransaction(db, {
+      await addPaymentTransaction(db, user?.id, {
         debtorId: Number(debtorId),
         amount: amt,
         description: description.trim() || null,
+        paymentMethod,
+        paymentProvider:
+          paymentMethod === "e_wallet"
+            ? walletProvider === "other"
+              ? customWallet.trim()
+              : walletProvider === "gcash"
+                ? "GCash"
+                : "Maya"
+            : null,
+        paymentReference:
+          paymentMethod === "cash"
+            ? null
+            : paymentReference.trim() || null,
       });
 
       router.back();
@@ -233,6 +260,77 @@ export default function AddPaymentScreen() {
           )}
         </View>
 
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <View>
+              <Text style={styles.sectionTitle}>Payment method</Text>
+              <Text style={styles.sectionSubtitle}>
+                Choose how this payment was received
+              </Text>
+            </View>
+
+            <View style={styles.requiredBadge}>
+              <Text style={styles.requiredText}>Required</Text>
+            </View>
+          </View>
+
+          <PaymentDropdown
+            label="Payment method *"
+            value={paymentMethod}
+            options={PAYMENT_METHODS}
+            visible={methodMenuVisible}
+            onOpen={() => setMethodMenuVisible(true)}
+            onClose={() => setMethodMenuVisible(false)}
+            onSelect={(value) => {
+              setPaymentMethod(value);
+              setMethodMenuVisible(false);
+            }}
+          />
+
+          {paymentMethod === "e_wallet" ? (
+            <>
+              <PaymentDropdown
+                label="E-wallet provider *"
+                value={walletProvider}
+                options={WALLET_PROVIDERS}
+                visible={walletMenuVisible}
+                onOpen={() => setWalletMenuVisible(true)}
+                onClose={() => setWalletMenuVisible(false)}
+                onSelect={(value) => {
+                  setWalletProvider(value);
+                  setWalletMenuVisible(false);
+                }}
+              />
+
+              {walletProvider === "other" ? (
+                <Field label="E-wallet name *">
+                  <TextInput
+                    value={customWallet}
+                    onChangeText={setCustomWallet}
+                    placeholder="Enter wallet name"
+                    placeholderTextColor={colors.textMuted}
+                    style={styles.selectInput}
+                  />
+                </Field>
+              ) : null}
+            </>
+          ) : null}
+
+          {paymentMethod === "e_wallet" || paymentMethod === "e_banking" ? (
+            <Field label="Reference number">
+              <TextInput
+                value={paymentReference}
+                onChangeText={setPaymentReference}
+                placeholder="Enter transaction reference"
+                placeholderTextColor={colors.textMuted}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                style={styles.selectInput}
+              />
+            </Field>
+          ) : null}
+        </View>
+
         {/* NOTE SECTION */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -286,7 +384,7 @@ export default function AddPaymentScreen() {
             </Text>
 
             <Text style={styles.summarySubtitle}>
-              This payment will be added to the debtor's transaction
+              This payment will be added to the debtor transaction
               history.
             </Text>
           </View>
@@ -323,6 +421,87 @@ function Field({ label, children }) {
       <Text style={styles.label}>{label}</Text>
       {children}
     </View>
+  );
+}
+
+const PAYMENT_METHODS = [
+  { value: "cash", label: "Cash", icon: "cash-outline" },
+  { value: "e_wallet", label: "E-wallet", icon: "phone-portrait-outline" },
+  { value: "e_banking", label: "E-banking", icon: "business-outline" },
+];
+
+const WALLET_PROVIDERS = [
+  { value: "gcash", label: "GCash", icon: "wallet-outline" },
+  { value: "maya", label: "Maya", icon: "wallet-outline" },
+  { value: "other", label: "Add another", icon: "add-circle-outline" },
+];
+
+function PaymentDropdown({
+  label,
+  value,
+  options,
+  visible,
+  onOpen,
+  onClose,
+  onSelect,
+}) {
+  const selectedOption = options.find((option) => option.value === value);
+
+  return (
+    <>
+      <Field label={label}>
+        <Pressable
+          onPress={onOpen}
+          style={({ pressed }) => [
+            styles.selectInput,
+            styles.selectTrigger,
+            pressed && styles.pressed,
+          ]}
+        >
+          <View style={styles.selectValue}>
+            <Ionicons
+              name={selectedOption?.icon || "wallet-outline"}
+              size={19}
+              color={colors.navy}
+            />
+            <Text style={styles.selectText}>{selectedOption?.label}</Text>
+          </View>
+          <Ionicons name="chevron-down" size={19} color={colors.textMuted} />
+        </Pressable>
+      </Field>
+
+      <Modal
+        visible={visible}
+        transparent
+        animationType="fade"
+        onRequestClose={onClose}
+      >
+        <Pressable style={styles.modalOverlay} onPress={onClose}>
+          <View style={styles.dropdownModal}>
+            <Text style={styles.dropdownTitle}>{label.replace(" *", "")}</Text>
+            {options.map((option) => (
+              <Pressable
+                key={option.value}
+                onPress={() => onSelect(option.value)}
+                style={({ pressed }) => [
+                  styles.dropdownOption,
+                  option.value === value && styles.dropdownOptionSelected,
+                  pressed && styles.dropdownOptionPressed,
+                ]}
+              >
+                <View style={styles.dropdownOptionIcon}>
+                  <Ionicons name={option.icon} size={20} color={colors.navy} />
+                </View>
+                <Text style={styles.dropdownOptionText}>{option.label}</Text>
+                {option.value === value ? (
+                  <Ionicons name="checkmark" size={20} color={colors.success} />
+                ) : null}
+              </Pressable>
+            ))}
+          </View>
+        </Pressable>
+      </Modal>
+    </>
   );
 }
 
@@ -586,6 +765,89 @@ const styles = StyleSheet.create({
     fontSize: 23,
     fontWeight: "800",
     color: colors.navy,
+  },
+
+  selectInput: {
+    minHeight: 52,
+    backgroundColor: colors.cream,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    paddingHorizontal: 14,
+    color: colors.text,
+    fontSize: 14,
+  },
+
+  selectTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  selectValue: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+
+  selectText: {
+    color: colors.navy,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    padding: spacing.lg,
+    backgroundColor: "rgba(0, 0, 0, 0.35)",
+  },
+
+  dropdownModal: {
+    backgroundColor: colors.white,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: 8,
+  },
+
+  dropdownTitle: {
+    color: colors.navy,
+    fontSize: 16,
+    fontWeight: "800",
+    marginBottom: 4,
+  },
+
+  dropdownOption: {
+    minHeight: 54,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+    paddingHorizontal: 10,
+    borderRadius: radius.sm,
+  },
+
+  dropdownOptionSelected: {
+    backgroundColor: "rgba(217,169,40,0.12)",
+  },
+
+  dropdownOptionPressed: {
+    backgroundColor: colors.cream,
+  },
+
+  dropdownOptionIcon: {
+    width: 34,
+    height: 34,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 17,
+    backgroundColor: colors.cream,
+  },
+
+  dropdownOptionText: {
+    flex: 1,
+    color: colors.navy,
+    fontSize: 14,
+    fontWeight: "700",
   },
 
   /* QUICK PAYMENTS */

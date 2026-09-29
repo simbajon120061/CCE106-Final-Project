@@ -28,11 +28,13 @@ import {
   addCreditTransaction,
   getProducts,
 } from "@/db/database";
+import { useAuth } from "@/context/AuthContext";
 
 export default function AddCreditScreen() {
   const { debtorId } = useLocalSearchParams();
   const db = useSQLiteContext();
   const router = useRouter();
+  const { user } = useAuth();
 
   const [products, setProducts] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
@@ -43,8 +45,8 @@ export default function AddCreditScreen() {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
-    getProducts(db).then(setProducts);
-  }, [db]);
+    getProducts(db, user?.id).then(setProducts);
+  }, [db, user?.id]);
 
   function calculateProductAmount(product, nextQuantity) {
     const qty = Number(nextQuantity) || 0;
@@ -81,7 +83,7 @@ export default function AddCreditScreen() {
     setSaving(true);
 
     try {
-      await addCreditTransaction(db, {
+      await addCreditTransaction(db, user?.id, {
         debtorId: Number(debtorId),
         amount: amt,
         description:

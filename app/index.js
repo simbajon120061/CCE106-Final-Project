@@ -1,14 +1,35 @@
 import { router } from "expo-router";
+import { useEffect } from "react";
+import { useSQLiteContext } from "expo-sqlite";
 import {
   Image,
   SafeAreaView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from "react-native";
 
 export default function WelcomeScreen() {
+  const db = useSQLiteContext();
+
+  useEffect(() => {
+    const redirectTimer = setTimeout(async () => {
+      try {
+        const result = await db.getFirstAsync(
+          "SELECT COUNT(*) AS count FROM users"
+        );
+        router.replace(
+          Number(result?.count) > 0 ? "/login" : "/signup"
+        );
+      } catch (error) {
+        console.error("Failed to check registered users", error);
+        router.replace("/login");
+      }
+    }, 5000);
+
+    return () => clearTimeout(redirectTimer);
+  }, [db]);
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>

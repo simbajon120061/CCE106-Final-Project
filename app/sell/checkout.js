@@ -19,11 +19,13 @@ import BottomNav, { bottomNavHeight } from "@/components/BottomNav";
 import { colors, spacing, typography, radius } from "@/constants/theme";
 import { formatCurrency } from "@/lib/format";
 import { createSale, getDebtorOptions } from "@/db/database";
+import { useAuth } from "@/context/AuthContext";
 
 export default function CheckoutScreen() {
   const { cart } = useLocalSearchParams();
   const db = useSQLiteContext();
   const router = useRouter();
+  const { user } = useAuth();
 
   const [saleType, setSaleType] = useState("cash");
   const [debtors, setDebtors] = useState([]);
@@ -31,6 +33,7 @@ export default function CheckoutScreen() {
   const [saving, setSaving] = useState(false);
 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [receipt, setReceipt] = useState(null);
 
   const cartItems = useMemo(() => {
     try {
@@ -43,8 +46,8 @@ export default function CheckoutScreen() {
   }, [cart]);
 
   useEffect(() => {
-    getDebtorOptions(db).then(setDebtors);
-  }, [db]);
+    getDebtorOptions(db, user?.id).then(setDebtors);
+  }, [db, user?.id]);
 
   const total = cartItems.reduce(
     (sum, item) =>
@@ -73,22 +76,20 @@ export default function CheckoutScreen() {
     setSaving(true);
 
     try {
-      await createSale(db, {
+      const saleId = await createSale(db, user?.id, {
         saleType,
         debtorId: selectedDebtorId,
         items: cartItems,
       });
 
-      Alert.alert(
-        "Sale recorded",
-        `Total: ${formatCurrency(total)}`,
-        [
-          {
-            text: "OK",
-            onPress: () => router.replace("/sell"),
-          },
-        ]
-      );
+      setReceipt({
+        id: saleId,
+        createdAt: new Date().toISOString(),
+        saleType,
+        debtorName: selectedDebtor?.full_name || null,
+        items: cartItems,
+        total,
+      });
     } catch (error) {
       Alert.alert(
         "Could not complete sale",
@@ -98,6 +99,11 @@ export default function CheckoutScreen() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function handleReceiptDone() {
+    setReceipt(null);
+    router.replace("/sell");
   }
 
   return (
@@ -679,8 +685,126 @@ export default function CheckoutScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* SALE RECEIPT MODAL */}
+      <Modal
+        visible={Boolean(receipt)}
+        transparent
+        animationType="fade"
+        onRequestClose={handleReceiptDone}
+      >
+        <View style={styles.receiptOverlay}>
+          <View style={styles.receiptSheet}>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.receiptContent}
+            >
+              <View style={styles.receiptSuccessIcon}>
+                <Ionicons
+                  name="checkmark"
+                  size={23}
+                  color={colors.white}
+                />
+              </View>
+
+              <Text style={styles.receiptStatus}>SALE RECORDED</Text>
+              <Text style={styles.receiptStoreName}>
+                {user?.storeName || "My Store"}
+              </Text>
+              <Text style={styles.receiptTitle}>Sales receipt</Text>
+
+              <View style={styles.receiptMeta}>
+                <Text style={styles.receiptMetaText}>
+                  Receipt #{receipt?.id}
+                </Text>
+                <Text style={styles.receiptMetaText}>
+                  {formatReceiptDate(receipt?.createdAt)}
+                </Text>
+              </View>
+
+              <View style={styles.receiptDivider} />
+
+              <View style={styles.receiptItems}>
+                {receipt?.items.map((item) => (
+                  <View key={item.product.id} style={styles.receiptItem}>
+                    <View style={styles.receiptItemInfo}>
+                      <Text style={styles.receiptItemName} numberOfLines={2}>
+                        {item.product.name}
+                      </Text>
+                      <Text style={styles.receiptItemDetail}>
+                        {item.quantity} x {formatCurrency(item.product.unit_price)}
+                      </Text>
+                    </View>
+                    <Text style={styles.receiptItemTotal}>
+                      {formatCurrency(item.quantity * item.product.unit_price)}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+
+              <View style={styles.receiptDivider} />
+
+              <ReceiptRow
+                label="Payment"
+                value={receipt?.saleType === "credit" ? "Utang" : "Cash"}
+              />
+              {receipt?.debtorName ? (
+                <ReceiptRow label="Debtor" value={receipt.debtorName} />
+              ) : null}
+              <View style={styles.receiptTotalRow}>
+                <Text style={styles.receiptTotalLabel}>TOTAL</Text>
+                <Text style={styles.receiptTotalValue}>
+                  {formatCurrency(receipt?.total || 0)}
+                </Text>
+              </View>
+
+              <View style={styles.receiptFooter}>
+                <Ionicons
+                  name="checkmark-circle-outline"
+                  size={16}
+                  color={colors.success}
+                />
+                <Text style={styles.receiptFooterText}>
+                  Inventory has been updated.
+                </Text>
+              </View>
+            </ScrollView>
+
+            <Pressable
+              onPress={handleReceiptDone}
+              style={({ pressed }) => [
+                styles.receiptDoneButton,
+                pressed && styles.completeButtonPressed,
+              ]}
+            >
+              <Text style={styles.receiptDoneText}>Done</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
+}
+
+function ReceiptRow({ label, value }) {
+  return (
+    <View style={styles.receiptRow}>
+      <Text style={styles.receiptRowLabel}>{label}</Text>
+      <Text style={styles.receiptRowValue} numberOfLines={1}>{value}</Text>
+    </View>
+  );
+}
+
+function formatReceiptDate(value) {
+  if (!value) return "";
+
+  return new Date(value).toLocaleString("en-PH", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function OptionChip({
@@ -1460,6 +1584,194 @@ const styles = StyleSheet.create({
   completeButtonText: {
     color: colors.navy,
     fontSize: 12,
+    fontWeight: "900",
+  },
+
+  /* SALE RECEIPT */
+  receiptOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(8,18,38,0.68)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.md,
+  },
+
+  receiptSheet: {
+    width: "100%",
+    maxWidth: 390,
+    maxHeight: "88%",
+    backgroundColor: colors.white,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: "hidden",
+    shadowColor: colors.navy,
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.22,
+    shadowRadius: 24,
+    elevation: 12,
+  },
+
+  receiptContent: {
+    padding: spacing.lg,
+    paddingBottom: spacing.md,
+  },
+
+  receiptSuccessIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "center",
+    backgroundColor: colors.success,
+    marginBottom: 10,
+  },
+
+  receiptStatus: {
+    color: colors.success,
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+    textAlign: "center",
+  },
+
+  receiptStoreName: {
+    color: colors.navy,
+    fontSize: 20,
+    fontWeight: "900",
+    textAlign: "center",
+    marginTop: 5,
+  },
+
+  receiptTitle: {
+    color: colors.textMuted,
+    fontSize: 11,
+    textAlign: "center",
+    marginTop: 2,
+  },
+
+  receiptMeta: {
+    alignItems: "center",
+    gap: 3,
+    marginTop: spacing.md,
+  },
+
+  receiptMetaText: {
+    color: colors.textMuted,
+    fontSize: 10,
+  },
+
+  receiptDivider: {
+    borderTopWidth: 1,
+    borderStyle: "dashed",
+    borderColor: colors.border,
+    marginVertical: spacing.md,
+  },
+
+  receiptItems: {
+    gap: 12,
+  },
+
+  receiptItem: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+  },
+
+  receiptItemInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  receiptItemName: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "800",
+    lineHeight: 17,
+  },
+
+  receiptItemDetail: {
+    color: colors.textMuted,
+    fontSize: 10,
+    marginTop: 2,
+  },
+
+  receiptItemTotal: {
+    color: colors.navy,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+
+  receiptRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md,
+    marginBottom: 8,
+  },
+
+  receiptRowLabel: {
+    color: colors.textMuted,
+    fontSize: 11,
+  },
+
+  receiptRowValue: {
+    flex: 1,
+    color: colors.navy,
+    fontSize: 11,
+    fontWeight: "800",
+    textAlign: "right",
+  },
+
+  receiptTotalRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: spacing.sm,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+
+  receiptTotalLabel: {
+    color: colors.navy,
+    fontSize: 13,
+    fontWeight: "900",
+    letterSpacing: 0.8,
+  },
+
+  receiptTotalValue: {
+    color: colors.navy,
+    fontSize: 22,
+    fontWeight: "900",
+  },
+
+  receiptFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    marginTop: spacing.lg,
+  },
+
+  receiptFooterText: {
+    color: colors.textMuted,
+    fontSize: 10,
+  },
+
+  receiptDoneButton: {
+    minHeight: 50,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.goldLight,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+
+  receiptDoneText: {
+    color: colors.navy,
+    fontSize: 13,
     fontWeight: "900",
   },
 });

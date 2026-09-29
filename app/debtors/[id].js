@@ -42,6 +42,7 @@ import {
   deleteTransaction,
   deleteDebtor,
 } from "@/db/database";
+import { useAuth } from "@/context/AuthContext";
 
 export default function DebtorDetailScreen() {
   const { id } = useLocalSearchParams();
@@ -49,6 +50,7 @@ export default function DebtorDetailScreen() {
 
   const db = useSQLiteContext();
   const router = useRouter();
+  const { user } = useAuth();
 
   const [debtor, setDebtor] = useState(null);
   const [transactions, setTransactions] = useState([]);
@@ -79,13 +81,13 @@ export default function DebtorDetailScreen() {
 
   const load = useCallback(async () => {
     const [d, tx] = await Promise.all([
-      getDebtor(db, debtorId),
-      getTransactionsForDebtor(db, debtorId),
+      getDebtor(db, user?.id, debtorId),
+      getTransactionsForDebtor(db, user?.id, debtorId),
     ]);
 
     setDebtor(d);
     setTransactions(tx);
-  }, [db, debtorId]);
+  }, [db, debtorId, user?.id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -106,7 +108,7 @@ export default function DebtorDetailScreen() {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
-            await deleteTransaction(db, txId);
+            await deleteTransaction(db, user?.id, txId);
             load();
           },
         },
@@ -138,7 +140,7 @@ export default function DebtorDetailScreen() {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
-            await deleteDebtor(db, debtorId);
+            await deleteDebtor(db, user?.id, debtorId);
             router.back();
           },
         },
@@ -218,10 +220,10 @@ export default function DebtorDetailScreen() {
 
           <View style={styles.heroTop}>
             <View style={styles.avatarWrapper}>
-              {debtor.id_photo_uri ? (
+              {debtor.profile_photo_uri ? (
                 <Image
                   source={{
-                    uri: debtor.id_photo_uri,
+                    uri: debtor.profile_photo_uri,
                   }}
                   style={styles.avatar}
                 />
@@ -386,7 +388,7 @@ export default function DebtorDetailScreen() {
               </Text>
 
               <Text style={styles.sectionSubtitle}>
-                Manage this customer's account
+                Manage this customer account
               </Text>
             </View>
           </View>
@@ -521,33 +523,6 @@ export default function DebtorDetailScreen() {
                 Customer information
               </Text>
             </View>
-
-            <Pressable
-              onPress={() =>
-                router.push({
-                  pathname: "/debtors/edit",
-                  params: {
-                    debtorId:
-                      String(debtorId),
-                  },
-                })
-              }
-              style={({ pressed }) => [
-                styles.editButton,
-                pressed &&
-                  styles.buttonPressed,
-              ]}
-            >
-              <Ionicons
-                name="create-outline"
-                size={17}
-                color={colors.navy}
-              />
-
-              <Text style={styles.editButtonText}>
-                Edit
-              </Text>
-            </Pressable>
           </View>
 
           <Card style={styles.profileCard}>
@@ -595,6 +570,15 @@ export default function DebtorDetailScreen() {
             )}
 
             <View style={styles.infoList}>
+              <InfoRow
+                icon="card-outline"
+                title="ID number"
+                value={
+                  debtor.id_number ||
+                  "No ID number on file"
+                }
+              />
+
               <InfoRow
                 icon="call-outline"
                 title="Contact number"
@@ -822,12 +806,16 @@ export default function DebtorDetailScreen() {
                         style={styles.txMeta}
                         numberOfLines={2}
                       >
-                        {tx.description
-                          ? `${tx.description} · `
-                          : ""}
-                        {formatDateTime(
-                          tx.created_at
-                        )}
+                        {[
+                          formatPaymentMethod(tx),
+                          tx.payment_reference
+                            ? `Reference: ${tx.payment_reference}`
+                            : null,
+                          tx.description,
+                          formatDateTime(tx.created_at),
+                        ]
+                          .filter(Boolean)
+                          .join(" | ")}
                       </Text>
                     </View>
 
@@ -901,7 +889,7 @@ export default function DebtorDetailScreen() {
             </Text>
 
             <Text style={styles.footerText}>
-              This debtor's records are stored locally
+              This debtor data is stored locally
               in Track&Tally.
             </Text>
           </View>
@@ -916,6 +904,22 @@ export default function DebtorDetailScreen() {
 /* =========================================================
    INFO ROW
 ========================================================= */
+
+function formatPaymentMethod(transaction) {
+  if (transaction.type !== "payment") return null;
+
+  if (transaction.payment_method === "e_wallet") {
+    return transaction.payment_provider
+      ? `E-wallet: ${transaction.payment_provider}`
+      : "E-wallet";
+  }
+
+  if (transaction.payment_method === "e_banking") {
+    return "E-banking";
+  }
+
+  return transaction.payment_method === "cash" ? "Cash" : null;
+}
 
 function InfoRow({
   icon,

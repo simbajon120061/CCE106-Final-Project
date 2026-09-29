@@ -3,7 +3,6 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 
 import {
-  Alert,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -89,11 +88,17 @@ export default function SignupScreen() {
       );
 
       if (existingUser) {
-        setError(
-          'An account with this phone number already exists.'
-        );
+        try {
+          await AsyncStorage.setItem('lastPhone', cleanedPhone);
+        } catch (storageError) {
+          console.warn(
+            'Could not save registered phone locally',
+            storageError
+          );
+        }
 
         setLoading(false);
+        router.replace('/login');
         return;
       }
 
@@ -126,6 +131,11 @@ export default function SignupScreen() {
         await AsyncStorage.setItem(
           'storeName',
           storeName.trim()
+        );
+
+        await AsyncStorage.setItem(
+          'lastPhone',
+          cleanedPhone
         );
       } catch (storageError) {
         console.warn(

@@ -15,15 +15,20 @@ import { Ionicons } from "@expo/vector-icons";
 
 import Button from "@/components/Button";
 import BottomNav, { bottomNavHeight } from "@/components/BottomNav";
+import UnitDropdown from "@/components/UnitDropdown";
 import { colors, spacing, typography, radius } from "@/constants/theme";
 import { createProduct } from "@/db/database";
+import { useAuth } from "@/context/AuthContext";
 
 export default function NewProductScreen() {
   const db = useSQLiteContext();
   const router = useRouter();
+  const { user } = useAuth();
 
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
+  const [unit, setUnit] = useState("piece");
+  const [measurementValue, setMeasurementValue] = useState("");
   const [price, setPrice] = useState("");
   const [stock, setStock] = useState("");
   const [threshold, setThreshold] = useState("5");
@@ -41,9 +46,12 @@ export default function NewProductScreen() {
     setSaving(true);
 
     try {
-      await createProduct(db, {
+      await createProduct(db, user?.id, {
         name: name.trim(),
         category: category.trim() || null,
+        unit,
+        measurement_value:
+          measurementValue === "" ? null : Number(measurementValue) || 0,
         unit_price: Number(price) || 0,
         stock_quantity: Number(stock) || 0,
         low_stock_threshold: Number(threshold) || 5,
@@ -166,6 +174,27 @@ export default function NewProductScreen() {
             </Field>
 
             <Field
+              label="Numerical value"
+              icon="calculator-outline"
+            >
+              <TextInput
+                value={measurementValue}
+                onChangeText={setMeasurementValue}
+                keyboardType="decimal-pad"
+                placeholder="e.g. 500"
+                placeholderTextColor={colors.textMuted}
+                style={styles.input}
+              />
+            </Field>
+
+            <Field
+              label="Unit of measurement"
+              icon="resize-outline"
+            >
+              <UnitDropdown value={unit} onChange={setUnit} />
+            </Field>
+
+            <Field
               label="Unit price (₱) *"
               icon="cash-outline"
             >
@@ -242,7 +271,7 @@ export default function NewProductScreen() {
                 />
 
                 <Text style={styles.helperText}>
-                  You'll see a low-stock indicator when inventory
+                  You will see a low-stock indicator when inventory
                   reaches this quantity.
                 </Text>
               </View>

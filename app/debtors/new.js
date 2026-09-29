@@ -28,21 +28,31 @@ import {
 } from "@/constants/theme";
 
 import { createDebtor } from "@/db/database";
+import { useAuth } from "@/context/AuthContext";
 
 export default function NewDebtorScreen() {
   const db = useSQLiteContext();
   const router = useRouter();
+  const { user } = useAuth();
 
   const [fullName, setFullName] = useState("");
   const [contact, setContact] = useState("");
+  const [idNumber, setIdNumber] = useState("");
   const [address, setAddress] = useState("");
   const [notes, setNotes] = useState("");
   const [creditLimit, setCreditLimit] = useState("");
+  const [profilePhotoUri, setProfilePhotoUri] = useState(null);
   const [idPhotoUri, setIdPhotoUri] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  const photoHandlers =
-    useIdPhotoHandlers(setIdPhotoUri);
+  const profilePhotoHandlers = usePhotoHandlers(
+    setProfilePhotoUri,
+    "Profile photo"
+  );
+  const idPhotoHandlers = usePhotoHandlers(
+    setIdPhotoUri,
+    "ID photo"
+  );
 
   async function handleSave() {
     if (!fullName.trim()) {
@@ -56,12 +66,14 @@ export default function NewDebtorScreen() {
     setSaving(true);
 
     try {
-      const id = await createDebtor(db, {
+      const id = await createDebtor(db, user?.id, {
         full_name: fullName.trim(),
         contact_number: contact.trim() || null,
+        id_number: idNumber.trim() || null,
         address: address.trim() || null,
         notes: notes.trim() || null,
         credit_limit: Number(creditLimit) || 0,
+        profile_photo_uri: profilePhotoUri,
         id_photo_uri: idPhotoUri,
       });
 
@@ -145,13 +157,44 @@ export default function NewDebtorScreen() {
           </Text>
 
           <Text style={styles.profileSubtitle}>
-            Add a photo to quickly identify this customer
+            Use a clear photo to identify this customer
           </Text>
 
-          <IdPhotoPicker
-            idPhotoUri={idPhotoUri}
-            {...photoHandlers}
+          <DebtorPhotoPicker
+            photoUri={profilePhotoUri}
+            photoName="Profile photo"
+            {...profilePhotoHandlers}
           />
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionIcon}>
+              <Ionicons
+                name="card-outline"
+                size={18}
+                color={colors.navy}
+              />
+            </View>
+
+            <View style={styles.sectionHeaderText}>
+              <Text style={styles.sectionTitle}>
+                ID verification
+              </Text>
+
+              <Text style={styles.sectionSubtitle}>
+                Store the customer ID photo separately
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.fieldsCard}>
+            <DebtorPhotoPicker
+              photoUri={idPhotoUri}
+              photoName="ID photo"
+              {...idPhotoHandlers}
+            />
+          </View>
         </View>
 
         {/* =====================================================
@@ -185,6 +228,8 @@ export default function NewDebtorScreen() {
               setFullName={setFullName}
               contact={contact}
               setContact={setContact}
+              idNumber={idNumber}
+              setIdNumber={setIdNumber}
               address={address}
               setAddress={setAddress}
               notes={notes}
@@ -313,7 +358,7 @@ export default function NewDebtorScreen() {
    PHOTO HANDLERS
 ========================================================= */
 
-export function useIdPhotoHandlers(setIdPhotoUri) {
+export function usePhotoHandlers(setPhotoUri, photoName) {
   const [removeModalVisible, setRemoveModalVisible] =
     useState(false);
 
@@ -324,7 +369,7 @@ export function useIdPhotoHandlers(setIdPhotoUri) {
     if (!permission.granted) {
       Alert.alert(
         "Permission needed",
-        "Camera access is required to take an ID photo."
+        `Camera access is required to take a ${photoName.toLowerCase()}.`
       );
       return;
     }
@@ -341,7 +386,7 @@ export function useIdPhotoHandlers(setIdPhotoUri) {
       !result.canceled &&
       result.assets?.[0]?.uri
     ) {
-      setIdPhotoUri(result.assets[0].uri);
+      setPhotoUri(result.assets[0].uri);
     }
   }
 
@@ -352,7 +397,7 @@ export function useIdPhotoHandlers(setIdPhotoUri) {
     if (!permission.granted) {
       Alert.alert(
         "Permission needed",
-        "Photo library access is required to select an ID photo."
+        `Photo library access is required to select a ${photoName.toLowerCase()}.`
       );
       return;
     }
@@ -369,7 +414,7 @@ export function useIdPhotoHandlers(setIdPhotoUri) {
       !result.canceled &&
       result.assets?.[0]?.uri
     ) {
-      setIdPhotoUri(result.assets[0].uri);
+      setPhotoUri(result.assets[0].uri);
     }
   }
 
@@ -378,7 +423,7 @@ export function useIdPhotoHandlers(setIdPhotoUri) {
   }
 
   function confirmRemovePhoto() {
-    setIdPhotoUri(null);
+    setPhotoUri(null);
     setRemoveModalVisible(false);
   }
 
@@ -426,6 +471,20 @@ export function DebtorFields(props) {
           placeholder="09XX XXX XXXX"
           placeholderTextColor={colors.textMuted}
           keyboardType="phone-pad"
+          style={styles.input}
+        />
+      </Field>
+
+      <Field
+        label="ID number"
+        icon="card-outline"
+      >
+        <TextInput
+          value={props.idNumber}
+          onChangeText={props.setIdNumber}
+          placeholder="e.g. 1234-5678-9012"
+          placeholderTextColor={colors.textMuted}
+          autoCapitalize="characters"
           style={styles.input}
         />
       </Field>
@@ -481,8 +540,9 @@ export function DebtorFields(props) {
    PROFILE PHOTO
 ========================================================= */
 
-export function IdPhotoPicker({
-  idPhotoUri,
+export function DebtorPhotoPicker({
+  photoUri,
+  photoName,
   onTakePhoto,
   onPickPhoto,
   onRemovePhoto,
@@ -492,13 +552,13 @@ export function IdPhotoPicker({
 }) {
   return (
     <>
-      {idPhotoUri ? (
+      {photoUri ? (
         <View style={styles.profilePhotoArea}>
           {/* PHOTO */}
 
           <View style={styles.profilePhotoOuter}>
             <Image
-              source={{ uri: idPhotoUri }}
+              source={{ uri: photoUri }}
               style={styles.profilePhoto}
             />
 
@@ -538,7 +598,7 @@ export function IdPhotoPicker({
             </View>
 
             <Text style={styles.photoAttachedText}>
-              Profile photo attached
+              {photoName} attached
             </Text>
           </View>
 
@@ -741,12 +801,12 @@ export function IdPhotoPicker({
             {/* Title */}
 
             <Text style={styles.modalTitle}>
-              Remove ID photo?
+              Remove {photoName}?
             </Text>
 
             <Text style={styles.modalMessage}>
               Are you sure you want to remove the
-              attached ID photo from this customer?
+              attached {photoName.toLowerCase()} from this customer?
             </Text>
 
             {/* Divider */}
@@ -1331,7 +1391,7 @@ const styles = StyleSheet.create({
   photoRemove: {
     borderColor: colors.danger,
 
-    backgroundColor: "#B3413B0C",
+    backgroundColor: colors.cream,
   },
 
   photoRemoveIcon: {

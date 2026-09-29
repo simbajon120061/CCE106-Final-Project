@@ -17,6 +17,7 @@ import TopHeader from "@/components/TopHeader";
 import { colors, spacing, radius } from "@/constants/theme";
 import { formatCurrency } from "@/lib/format";
 import { getDebtors } from "@/db/database";
+import { useAuth } from "@/context/AuthContext";
 
 /*
  * A-Z AVATAR COLORS
@@ -61,6 +62,8 @@ const getAvatarColor = (name) => {
 export default function DebtorsScreen() {
   const db = useSQLiteContext();
   const router = useRouter();
+  const { user } = useAuth();
+  const userId = user?.id;
 
   const [debtors, setDebtors] = useState([]);
   const [query, setQuery] = useState("");
@@ -70,7 +73,7 @@ export default function DebtorsScreen() {
     async (q) => {
       try {
         const rows = await getDebtors(
-          db,
+          db, userId,
           q?.trim() || undefined
         );
 
@@ -79,7 +82,7 @@ export default function DebtorsScreen() {
         console.error("Failed to load debtors:", error);
       }
     },
-    [db]
+    [db, userId]
   );
 
   useFocusEffect(
@@ -1057,7 +1060,7 @@ const styles = StyleSheet.create({
       bottomNavHeight + spacing.md,
     width: 62,
     height: 62,
-    borderRadius: 21,
+    borderRadius: radius.full,
     backgroundColor: colors.navy,
     alignItems: "center",
     justifyContent: "center",
@@ -1072,16 +1075,7 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
 
-  addInner: {
-    width: 48,
-    height: 48,
-    borderRadius: 17,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#FFFFFF12",
-    borderWidth: 1,
-    borderColor: "#FFFFFF18",
-  },
+  
 
   floatingAddPressed: {
     opacity: 0.8,

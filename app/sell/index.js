@@ -18,20 +18,22 @@ import TopHeader from "@/components/TopHeader";
 import { colors, spacing, radius } from "@/constants/theme";
 import { formatCurrency } from "@/lib/format";
 import { getProducts } from "@/db/database";
+import { useAuth } from "@/context/AuthContext";
 
 export default function SellScreen() {
   const db = useSQLiteContext();
   const router = useRouter();
+  const { user } = useAuth();
   const [products, setProducts] = useState([]);
   const [query, setQuery] = useState("");
   const [cart, setCart] = useState({});
 
   const load = useCallback(
     async (q) => {
-      const rows = await getProducts(db, q?.trim() || undefined);
+      const rows = await getProducts(db, user?.id, q?.trim() || undefined);
       setProducts(rows);
     },
-    [db]
+    [db, user?.id]
   );
 
   useFocusEffect(

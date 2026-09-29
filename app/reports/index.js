@@ -13,6 +13,8 @@ import { useState, useCallback } from "react";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
+import * as Print from "expo-print";
+import * as Sharing from "expo-sharing";
 
 import Card from "@/components/Card";
 import Button from "@/components/Button";
@@ -39,10 +41,12 @@ import {
   getTransactionHistory,
   getUnpaidBalances,
 } from "@/db/database";
+import { useAuth } from "@/context/AuthContext";
 
 export default function ReportsScreen() {
   const db = useSQLiteContext();
   const router = useRouter();
+  const { user } = useAuth();
 
   const [tab, setTab] = useState("sales");
   const [summary, setSummary] = useState([]);
@@ -50,6 +54,7 @@ export default function ReportsScreen() {
   const [lowStock, setLowStock] = useState([]);
   const [history, setHistory] = useState([]);
   const [backupLoading, setBackupLoading] = useState(false);
+  const [reportLoading, setReportLoading] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -57,10 +62,10 @@ export default function ReportsScreen() {
 
       async function load() {
         const [s, u, l, h] = await Promise.all([
-          getDailySalesSummary(db, 14),
-          getUnpaidBalances(db),
-          getLowStockProducts(db),
-          getTransactionHistory(db, 30),
+          getDailySalesSummary(db, user?.id, 14),
+          getUnpaidBalances(db, user?.id),
+          getLowStockProducts(db, user?.id),
+          getTransactionHistory(db, user?.id, 30),
         ]);
 
         if (!active) return;
@@ -76,7 +81,7 @@ export default function ReportsScreen() {
       return () => {
         active = false;
       };
-    }, [db])
+    }, [db, user?.id])
   );
 
   const totalUnpaid = unpaid.reduce(
@@ -103,7 +108,7 @@ export default function ReportsScreen() {
     setBackupLoading(true);
 
     try {
-      const data = await exportAllData(db);
+      const data = await exportAllData(db, user?.id);
 
       await Share.share({
         title: "Track and Tally Backup",
@@ -174,75 +179,47 @@ export default function ReportsScreen() {
     return lines.join("\n");
   }
 
-  function printReports(saveAsPdf = false) {
-    if (
-      Platform.OS !== "web" ||
-      !globalThis.window?.open
-    ) {
+  async function printReports(saveAsPdf = false) {
+    setReportLoading(true);
+
+    try {
+      const reportHtml = buildReportsHtml(buildReportsText());
+
+      if (Platform.OS === "web") {
+        openWebPrintDialog(reportHtml);
+        return;
+      }
+
+      if (!saveAsPdf) {
+        await Print.printAsync({ html: reportHtml });
+        return;
+      }
+
+      const { uri } = await Print.printToFileAsync({ html: reportHtml });
+      const canShare = await Sharing.isAvailableAsync();
+
+      if (!canShare) {
+        Alert.alert(
+          "PDF created",
+          "This device cannot open a save sheet for the PDF."
+        );
+        return;
+      }
+
+      await Sharing.shareAsync(uri, {
+        dialogTitle: "Save Track and Tally report",
+        mimeType: "application/pdf",
+        UTI: ".pdf",
+      });
+    } catch (error) {
+      console.error("Could not create report PDF:", error);
       Alert.alert(
-        saveAsPdf
-          ? "Save as PDF"
-          : "Print reports",
-        "Native print and PDF export need Expo print support. For now, use this option on web or share the backup data."
+        saveAsPdf ? "Could not save PDF" : "Could not print reports",
+        getExportErrorMessage(error)
       );
-
-      return;
+    } finally {
+      setReportLoading(false);
     }
-
-    const reportText = buildReportsText();
-
-    const escapedReport = reportText
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-
-    const printWindow =
-      globalThis.window.open("", "_blank");
-
-    if (!printWindow) {
-      Alert.alert(
-        "Print blocked",
-        "Allow pop-ups for this app, then try again."
-      );
-
-      return;
-    }
-
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>Track and Tally Reports</title>
-
-          <style>
-            body {
-              font-family: Arial, sans-serif;
-              margin: 32px;
-              color: #20242C;
-            }
-
-            h1 {
-              color: #1E3A5F;
-              margin-bottom: 8px;
-            }
-
-            pre {
-              white-space: pre-wrap;
-              font-size: 14px;
-              line-height: 1.5;
-            }
-          </style>
-        </head>
-
-        <body>
-          <h1>Track and Tally Reports</h1>
-          <pre>${escapedReport}</pre>
-        </body>
-      </html>
-    `);
-
-    printWindow.document.close();
-    printWindow.focus();
-    printWindow.print();
   }
 
   return (
@@ -718,6 +695,8 @@ export default function ReportsScreen() {
                   onPress={() =>
                     printReports(false)
                   }
+                  loading={reportLoading}
+                  disabled={reportLoading}
                   icon={
                     <Ionicons
                       name="print-outline"
@@ -727,20 +706,6 @@ export default function ReportsScreen() {
                   }
                 />
 
-                <Button
-                  title="Save as PDF"
-                  variant="secondary"
-                  onPress={() =>
-                    printReports(true)
-                  }
-                  icon={
-                    <Ionicons
-                      name="download-outline"
-                      size={18}
-                      color={colors.navyDark}
-                    />
-                  }
-                />
               </View>
             </Card>
 
@@ -836,6 +801,100 @@ export default function ReportsScreen() {
       <BottomNav activeTab="reports" />
     </SafeAreaView>
   );
+}
+
+function buildReportsHtml(reportText) {
+  const escapedReport = reportText
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  return `
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Track and Tally Reports</title>
+        <style>
+          @page { margin: 24px; }
+          body {
+            font-family: Arial, sans-serif;
+            color: #20242C;
+            margin: 0;
+          }
+          .report {
+            max-width: 720px;
+            margin: 0 auto;
+          }
+          header {
+            border-bottom: 3px solid #1E3A5F;
+            padding-bottom: 14px;
+            margin-bottom: 20px;
+          }
+          h1 {
+            color: #1E3A5F;
+            font-size: 24px;
+            margin: 0;
+          }
+          .subtitle {
+            color: #6B7280;
+            font-size: 12px;
+            margin: 5px 0 0;
+          }
+          pre {
+            white-space: pre-wrap;
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+            line-height: 1.6;
+            margin: 0;
+          }
+          footer {
+            border-top: 1px solid #E4E0D2;
+            color: #6B7280;
+            font-size: 10px;
+            margin-top: 24px;
+            padding-top: 12px;
+          }
+        </style>
+      </head>
+      <body>
+        <main class="report">
+          <header>
+            <h1>Track and Tally</h1>
+            <p class="subtitle">Store report backup</p>
+          </header>
+          <pre>${escapedReport}</pre>
+          <footer>Generated by Track and Tally</footer>
+        </main>
+      </body>
+    </html>
+  `;
+}
+
+function openWebPrintDialog(html) {
+  const printWindow = globalThis.window?.open("", "_blank");
+
+  if (!printWindow) {
+    Alert.alert(
+      "Print blocked",
+      "Allow pop-ups for this app, then try again."
+    );
+    return;
+  }
+
+  printWindow.document.write(html);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
+}
+
+function getExportErrorMessage(error) {
+  const message = error instanceof Error ? error.message : "";
+
+  if (message) {
+    return message;
+  }
+
+  return "Please restart the app and try again.";
 }
 
 function SectionHeader({

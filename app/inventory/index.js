@@ -21,11 +21,14 @@ import {
   radius,
 } from "@/constants/theme";
 import { formatCurrency } from "@/lib/format";
+import { formatProductUnit } from "@/constants/productUnits";
 import { getProducts } from "@/db/database";
+import { useAuth } from "@/context/AuthContext";
 
 export default function InventoryScreen() {
   const db = useSQLiteContext();
   const router = useRouter();
+  const { user } = useAuth();
 
   const [products, setProducts] = useState([]);
   const [query, setQuery] = useState("");
@@ -34,12 +37,12 @@ export default function InventoryScreen() {
   const load = useCallback(
     async (q) => {
       const rows = await getProducts(
-        db,
+        db, user?.id,
         q.trim() || undefined
       );
       setProducts(rows);
     },
-    [db]
+    [db, user?.id]
   );
 
   useFocusEffect(
@@ -334,6 +337,20 @@ export default function InventoryScreen() {
                   </View>
                 ) : null}
 
+                {item.measurement_value != null ? (
+                  <View style={styles.categoryRow}>
+                    <Ionicons
+                      name="resize-outline"
+                      size={12}
+                      color={colors.textMuted}
+                    />
+
+                    <Text style={styles.category}>
+                      {item.measurement_value} {formatProductUnit(item.unit)}
+                    </Text>
+                  </View>
+                ) : null}
+
                 <View
                   style={styles.productBottom}
                 >
@@ -406,10 +423,7 @@ export default function InventoryScreen() {
                           },
                         ]}
                       >
-                        {stock}{" "}
-                        {stock === 1
-                          ? "item"
-                          : "items"}
+                        {stock} {stock === 1 ? "item" : "items"}
                       </Text>
                     </View>
                   </View>
@@ -862,8 +876,8 @@ const styles = StyleSheet.create({
     right: spacing.md,
     bottom:
       bottomNavHeight + spacing.md,
-    width: 58,
-    height: 58,
+    width: 62,
+    height: 62,
     borderRadius: radius.full,
     backgroundColor: colors.navy,
     alignItems: "center",
