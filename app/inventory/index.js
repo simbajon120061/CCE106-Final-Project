@@ -111,19 +111,25 @@ export default function InventoryScreen() {
               style={styles.card}
               onPress={() => router.push(`/inventory/${item.id}`)}
             >
-              {low && (
-                <View style={styles.lowBadge}>
-                  <Text style={styles.lowBadgeText}>LOW</Text>
-                </View>
-              )}
-              <Text style={styles.productName} numberOfLines={2}>
-                {item.name}
-              </Text>
-              {item.category ? <Text style={styles.category}>{item.category}</Text> : null}
+              <View style={styles.info}>
+                <Text style={styles.productName} numberOfLines={2}>
+                  {item.name}
+                </Text>
+                {item.category ? <Text style={styles.category}>{item.category}</Text> : null}
+              </View>
+
               <Text style={styles.price}>{formatCurrency(item.unit_price)}</Text>
-              <Text style={[styles.stock, low && { color: colors.danger }]}>
-                {item.stock_quantity} in stock
-              </Text>
+
+              <View style={styles.stockWrap}>
+                {low && (
+                  <View style={styles.lowBadge}>
+                    <Text style={styles.lowBadgeText}>LOW</Text>
+                  </View>
+                )}
+                <Text style={[styles.stock, low && { color: colors.danger }]}>
+                  {item.stock_quantity} in stock
+                </Text>
+              </View>
             </Pressable>
           );
         }}
@@ -152,6 +158,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.cream },
   controls: {
     paddingHorizontal: spacing.md,
+    paddingVertical: 15,
     marginBottom: spacing.md,
     gap: spacing.sm,
   },
@@ -208,7 +215,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: spacing.md,
     marginBottom: spacing.sm,
-    gap: spacing.sm, // Increase gap slightly for row items
+    gap: spacing.md, // Increase gap slightly for row items
 
     // Added for List Structure
     flexDirection: "row",
@@ -216,9 +223,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   lowBadge: {
-    position: "absolute",
-    top: spacing.sm,
-    right: spacing.sm,
     backgroundColor: colors.danger,
     borderRadius: radius.full,
     paddingHorizontal: 8,
@@ -229,6 +233,8 @@ const styles = StyleSheet.create({
   category: { fontSize: 11, color: colors.textMuted },
   price: { fontSize: 16, fontWeight: "800", color: colors.navy, marginTop: 4 },
   stock: { fontSize: 12, color: colors.textMuted },
+  info: { flex: 1, gap: 2 },
+  stockWrap: { alignItems: "flex-end", gap: 4, marginLeft: 16 },
   floatingAddBtn: {
     position: "absolute",
     right: spacing.md,
