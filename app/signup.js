@@ -163,9 +163,14 @@ export default function SignupScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.cream },
-  container: { padding: spacing.md, justifyContent: "center", minHeight: "100%" },
+  container: { 
+    flexGrow: 1, 
+    padding: spacing.md, 
+    justifyContent: "flex-start", 
+    paddingTop: spacing.xl * 1.9, 
+  },
   header: { alignItems: "center", marginBottom: spacing.lg, position: "relative" },
-  backBtn: { position: "absolute", left: 0, top: 0 },
+  backBtn: { position: "absolute", left: 0, top: 10 },
   title: { ...typography.title, textAlign: "center" },
   subtitle: { ...typography.label, textAlign: "center", marginTop: 4 },
   formCard: { gap: spacing.md },
