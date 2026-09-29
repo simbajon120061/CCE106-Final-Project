@@ -155,64 +155,20 @@ export default function ReportsScreen() {
     }
   }
 
-  function buildReportsText() {
-    const generatedDate =
-      new Date().toLocaleDateString("en-PH", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      });
-
-    const lines = [
-      "Track and Tally Reports",
-      `Generated: ${generatedDate}`,
-      "",
-      "Today's Summary",
-      `Cash sales: ${formatCurrency(todayCash)}`,
-      `Utang sales: ${formatCurrency(todayCredit)}`,
-      `Grand total: ${formatCurrency(todayGrandTotal)}`,
-      `Items sold: ${todayItemsSold}`,
-      "",
-      `Unpaid Balances (${unpaid.length} debtors)`,
-      `Total outstanding: ${formatCurrency(totalUnpaid)}`,
-      ...unpaid.map(
-        (debtor) =>
-          `${debtor.full_name}: ${formatCurrency(
-            debtor.balance
-          )}`
-      ),
-      "",
-      "Inventory Watch",
-      ...(lowStock.length
-        ? lowStock.map(
-            (product) =>
-              `${product.name}: ${product.stock_quantity} left`
-          )
-        : ["Stock levels look healthy"]),
-      "",
-      "Recent History",
-      ...(history.length
-        ? history.map(
-            (entry) =>
-              `${formatDate(entry.date)} - ${
-                entry.label
-              }${
-                entry.debtor_name
-                  ? ` - ${entry.debtor_name}`
-                  : ""
-              }: ${formatCurrency(entry.amount)}`
-          )
-        : ["No activity recorded yet"]),
-    ];
-
-    return lines.join("\n");
-  }
-
   async function printReports(saveAsPdf = false) {
     setReportLoading(true);
 
     try {
-      const reportHtml = buildReportsHtml(buildReportsText());
+      const reportHtml = buildReportsHtml({
+        todayCash,
+        todayCredit,
+        todayGrandTotal,
+        todayItemsSold,
+        totalUnpaid,
+        unpaid,
+        lowStock,
+        history,
+      });
 
       if (Platform.OS === "web") {
         openWebPrintDialog(reportHtml);
@@ -754,7 +710,7 @@ export default function ReportsScreen() {
 
               <View style={styles.reportActions}>
                 <Button
-                  title="Print reports"
+                  title="Print Reports"
                   variant="ghost"
                   onPress={() =>
                     printReports(false)
@@ -867,11 +823,72 @@ export default function ReportsScreen() {
   );
 }
 
-function buildReportsHtml(reportText) {
-  const escapedReport = reportText
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+function buildReportsHtml(report) {
+  const generatedAt = new Date().toLocaleString("en-PH", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const summaryCards = [
+    ["Cash sales", formatCurrency(report.todayCash), "cash"],
+    ["Utang sales", formatCurrency(report.todayCredit), "utang"],
+    ["Total sales", formatCurrency(report.todayGrandTotal), "total"],
+    ["Items sold", String(report.todayItemsSold), "items"],
+  ]
+    .map(
+      ([label, value, variant]) => `
+        <div class="metric ${variant}">
+          <p>${label}</p>
+          <strong>${value}</strong>
+        </div>`
+    )
+    .join("");
+  const unpaidRows = report.unpaid.length
+    ? report.unpaid
+        .map(
+          (debtor) => `
+            <tr>
+              <td>${escapeHtml(debtor.full_name)}</td>
+              <td class="amount danger">${formatCurrency(debtor.balance)}</td>
+            </tr>`
+        )
+        .join("")
+    : '<tr><td colspan="2" class="empty">Everyone is settled up.</td></tr>';
+  const stockRows = report.lowStock.length
+    ? report.lowStock
+        .map(
+          (product) => `
+            <tr>
+              <td>${escapeHtml(product.name)}</td>
+              <td class="amount danger">${product.stock_quantity} left</td>
+            </tr>`
+        )
+        .join("")
+    : '<tr><td colspan="2" class="empty">Stock levels look healthy.</td></tr>';
+  const historyRows = report.history.length
+    ? report.history
+        .map((entry) => {
+          const type =
+            entry.type === "payment"
+              ? "Payment"
+              : entry.type === "credit"
+                ? "Utang"
+                : "Cash sale";
+          const party = entry.debtor_name || "-";
+          const amountPrefix = entry.type === "payment" ? "-" : "+";
+
+          return `
+            <tr>
+              <td>${formatDate(entry.date)}</td>
+              <td>${escapeHtml(type)}</td>
+              <td>${escapeHtml(party)}</td>
+              <td class="amount ${entry.type === "payment" ? "success" : ""}">${amountPrefix}${formatCurrency(entry.amount)}</td>
+            </tr>`;
+        })
+        .join("")
+    : '<tr><td colspan="4" class="empty">No activity recorded yet.</td></tr>';
 
   return `
     <html>
@@ -879,24 +896,29 @@ function buildReportsHtml(reportText) {
         <meta charset="utf-8" />
         <title>Track and Tally Reports</title>
         <style>
-          @page { margin: 24px; }
+          @page { margin: 18mm 14mm; }
+          * { box-sizing: border-box; }
           body {
-            font-family: Arial, sans-serif;
-            color: #20242C;
+            font-family: Arial, Helvetica, sans-serif;
+            color: #20242c;
             margin: 0;
+            font-size: 12px;
           }
           .report {
-            max-width: 720px;
+            max-width: 800px;
             margin: 0 auto;
           }
           header {
             border-bottom: 3px solid #1E3A5F;
-            padding-bottom: 14px;
-            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            padding-bottom: 12px;
+            margin-bottom: 18px;
           }
           h1 {
             color: #1E3A5F;
-            font-size: 24px;
+            font-size: 25px;
             margin: 0;
           }
           .subtitle {
@@ -904,34 +926,81 @@ function buildReportsHtml(reportText) {
             font-size: 12px;
             margin: 5px 0 0;
           }
-          pre {
-            white-space: pre-wrap;
-            font-family: Arial, sans-serif;
-            font-size: 12px;
-            line-height: 1.6;
-            margin: 0;
-          }
+          .generated { color: #6B7280; font-size: 10px; text-align: right; }
+          h2 { color: #1E3A5F; font-size: 14px; margin: 23px 0 9px; }
+          .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
+          .metric { background: #F7F4EA; border-top: 3px solid #1E3A5F; padding: 10px; }
+          .metric.utang { border-color: #BE4646; }
+          .metric.total { border-color: #378C5A; }
+          .metric.items { border-color: #D9A928; }
+          .metric p { color: #6B7280; font-size: 10px; margin: 0 0 5px; }
+          .metric strong { color: #20242C; font-size: 15px; }
+          .section-head { display: flex; justify-content: space-between; align-items: baseline; }
+          .total-outstanding { color: #BE4646; font-weight: bold; font-size: 11px; }
+          table { border-collapse: collapse; width: 100%; }
+          th { background: #1E3A5F; color: #fff; font-size: 10px; letter-spacing: .2px; text-align: left; }
+          th, td { border-bottom: 1px solid #E4E0D2; padding: 8px; }
+          tr { page-break-inside: avoid; }
+          .amount { text-align: right; font-weight: bold; white-space: nowrap; }
+          .danger { color: #BE4646; }
+          .success { color: #378C5A; }
+          .empty { color: #6B7280; font-style: italic; text-align: center; padding: 13px; }
           footer {
             border-top: 1px solid #E4E0D2;
             color: #6B7280;
             font-size: 10px;
-            margin-top: 24px;
+            margin-top: 28px;
             padding-top: 12px;
+            text-align: center;
           }
         </style>
       </head>
       <body>
         <main class="report">
           <header>
-            <h1>Track and Tally</h1>
-            <p class="subtitle">Store report backup</p>
+            <div>
+              <h1>Track and Tally</h1>
+              <p class="subtitle">Store activity report</p>
+            </div>
+            <p class="generated">Generated<br />${generatedAt}</p>
           </header>
-          <pre>${escapedReport}</pre>
+          <h2>Today's sales summary</h2>
+          <section class="metrics">${summaryCards}</section>
+
+          <div class="section-head">
+            <h2>Unpaid balances (${report.unpaid.length})</h2>
+            <span class="total-outstanding">Total: ${formatCurrency(report.totalUnpaid)}</span>
+          </div>
+          <table>
+            <thead><tr><th>Customer</th><th class="amount">Balance</th></tr></thead>
+            <tbody>${unpaidRows}</tbody>
+          </table>
+
+          <h2>Recent transaction history</h2>
+          <table>
+            <thead><tr><th>Date</th><th>Type</th><th>Customer</th><th class="amount">Amount</th></tr></thead>
+            <tbody>${historyRows}</tbody>
+          </table>
+
+          <h2>Inventory watch</h2>
+          <table>
+            <thead><tr><th>Product</th><th class="amount">Stock</th></tr></thead>
+            <tbody>${stockRows}</tbody>
+          </table>
           <footer>Generated by Track and Tally</footer>
         </main>
       </body>
     </html>
   `;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function openWebPrintDialog(html) {
