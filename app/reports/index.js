@@ -4,12 +4,13 @@ import {
   StyleSheet,
   ScrollView,
   Pressable,
+  Modal,
   Alert,
   Share,
   Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
@@ -53,6 +54,10 @@ export default function ReportsScreen() {
   const [unpaid, setUnpaid] = useState([]);
   const [lowStock, setLowStock] = useState([]);
   const [history, setHistory] = useState([]);
+  const [historyTypeFilter, setHistoryTypeFilter] =
+    useState("all");
+  const [historyDateFilter, setHistoryDateFilter] =
+    useState("all");
   const [backupLoading, setBackupLoading] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
 
@@ -103,6 +108,30 @@ export default function ReportsScreen() {
 
   const todayItemsSold =
     today?.item_count || 0;
+
+  const historyDates = useMemo(
+    () => [
+      ...new Set(
+        history.map((entry) => getHistoryDateKey(entry.date))
+      ),
+    ],
+    [history]
+  );
+
+  const filteredHistory = useMemo(
+    () =>
+      history.filter((entry) => {
+        const matchesType =
+          historyTypeFilter === "all" ||
+          entry.type === historyTypeFilter;
+        const matchesDate =
+          historyDateFilter === "all" ||
+          getHistoryDateKey(entry.date) === historyDateFilter;
+
+        return matchesType && matchesDate;
+      }),
+    [history, historyDateFilter, historyTypeFilter]
+  );
 
   async function handleShareBackup() {
     setBackupLoading(true);
@@ -498,22 +527,56 @@ export default function ReportsScreen() {
             <SectionHeader
               icon="time-outline"
               title="Recent history"
-              subtitle="Your latest transactions"
+              subtitle="Filter your latest transactions"
             />
+
+            <Card style={styles.historyFiltersCard}>
+              <Text style={styles.filterLabel}>Transaction type</Text>
+              <HistoryFilterDropdown
+                title="Transaction type"
+                value={historyTypeFilter}
+                options={[
+                  { label: "All transactions", value: "all" },
+                  { label: "Payments", value: "payment" },
+                  { label: "Utang", value: "credit" },
+                ]}
+                onChange={setHistoryTypeFilter}
+              />
+
+              <Text style={styles.filterLabel}>Date</Text>
+              <HistoryFilterDropdown
+                title="Date"
+                value={historyDateFilter}
+                options={[
+                  { label: "All dates", value: "all" },
+                  ...historyDates.map((date) => ({
+                    label: formatDate(date),
+                    value: date,
+                  })),
+                ]}
+                onChange={setHistoryDateFilter}
+              />
+            </Card>
 
             {history.length === 0 ? (
               <EmptyState
                 icon="time-outline"
                 title="No activity recorded yet"
               />
+            ) : filteredHistory.length === 0 ? (
+              <EmptyState
+                icon="funnel-outline"
+                title="No matching transactions"
+                subtitle="Try a different transaction type or date."
+              />
             ) : (
               <Card style={styles.listCard}>
-                {history.map((entry, i) => (
+                {filteredHistory.map((entry, i) => (
                   <View
                     key={entry.id}
                     style={[
                       styles.dayRow,
-                      i !== history.length - 1 &&
+                      i !== filteredHistory.length - 1 &&
                         styles.rowBorder,
                     ]}
                   >
@@ -577,10 +640,11 @@ export default function ReportsScreen() {
                       </Text>
 
                       <Text style={styles.historyType}>
-                        {entry.type ===
-                        "payment"
+                        {entry.type === "payment"
                           ? "Payment"
-                          : "Sale"}
+                          : entry.type === "credit"
+                            ? "Utang"
+                            : "Cash sale"}
                       </Text>
                     </View>
                   </View>
@@ -895,6 +959,87 @@ function getExportErrorMessage(error) {
   }
 
   return "Please restart the app and try again.";
+}
+
+function getHistoryDateKey(value) {
+  return String(value || "").slice(0, 10);
+}
+
+function HistoryFilterDropdown({ title, value, options, onChange }) {
+  const [visible, setVisible] = useState(false);
+  const selectedOption = options.find(
+    (option) => option.value === value
+  );
+
+  function selectOption(nextValue) {
+    onChange(nextValue);
+    setVisible(false);
+  }
+
+  return (
+    <>
+      <Pressable
+        style={({ pressed }) => [
+          styles.filterDropdown,
+          pressed && styles.filterDropdownPressed,
+        ]}
+        onPress={() => setVisible(true)}
+      >
+        <Text style={styles.filterDropdownText}>
+          {selectedOption?.label || "Select an option"}
+        </Text>
+        <Ionicons
+          name="chevron-down"
+          size={18}
+          color={colors.textMuted}
+        />
+      </Pressable>
+
+      <Modal
+        visible={visible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setVisible(false)}
+      >
+        <Pressable
+          style={styles.filterModalOverlay}
+          onPress={() => setVisible(false)}
+        >
+          <Pressable style={styles.filterModal}>
+            <Text style={styles.filterModalTitle}>{title}</Text>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.filterOptions}
+            >
+              {options.map((option) => (
+                <Pressable
+                  key={option.value}
+                  style={({ pressed }) => [
+                    styles.filterOption,
+                    option.value === value &&
+                      styles.filterOptionSelected,
+                    pressed && styles.filterDropdownPressed,
+                  ]}
+                  onPress={() => selectOption(option.value)}
+                >
+                  <Text style={styles.filterOptionText}>
+                    {option.label}
+                  </Text>
+                  {option.value === value && (
+                    <Ionicons
+                      name="checkmark"
+                      size={19}
+                      color={colors.success}
+                    />
+                  )}
+                </Pressable>
+              ))}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
+  );
 }
 
 function SectionHeader({
@@ -1377,6 +1522,85 @@ const styles = StyleSheet.create({
   },
 
   /* ---------------- HISTORY ---------------- */
+
+  historyFiltersCard: {
+    borderRadius: 18,
+    gap: 9,
+    padding: 14,
+  },
+
+  filterLabel: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: "800",
+    marginTop: 2,
+  },
+
+  filterDropdown: {
+    backgroundColor: colors.cream,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    minHeight: 46,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  filterDropdownPressed: {
+    opacity: 0.8,
+  },
+
+  filterDropdownText: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+
+  filterModalOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    padding: spacing.lg,
+    backgroundColor: "rgba(0,0,0,0.35)",
+  },
+
+  filterModal: {
+    maxHeight: "75%",
+    borderRadius: 18,
+    padding: spacing.md,
+    backgroundColor: colors.white,
+  },
+
+  filterModalTitle: {
+    color: colors.navy,
+    fontSize: 16,
+    fontWeight: "900",
+    marginBottom: spacing.sm,
+  },
+
+  filterOptions: {
+    gap: 4,
+  },
+
+  filterOption: {
+    minHeight: 48,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  filterOptionSelected: {
+    backgroundColor: "rgba(217,169,40,0.12)",
+  },
+
+  filterOptionText: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "700",
+  },
 
   historyIcon: {
     width: 38,
