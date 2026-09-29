@@ -1,5 +1,13 @@
+
 import { useCallback, useState } from "react";
-import { View, Text, StyleSheet, FlatList, Pressable, TextInput } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  Pressable,
+  TextInput,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
@@ -37,10 +45,15 @@ export default function SellScreen() {
     setCart((current) => {
       const existing = current[product.id];
       const currentQuantity = existing?.quantity || 0;
+
       if (currentQuantity + 1 > product.stock_quantity) return current;
+
       return {
         ...current,
-        [product.id]: { product, quantity: currentQuantity + 1 },
+        [product.id]: {
+          product,
+          quantity: currentQuantity + 1,
+        },
       };
     });
   }
@@ -48,23 +61,35 @@ export default function SellScreen() {
   function removeFromCart(productId) {
     setCart((current) => {
       const existing = current[productId];
+
       if (!existing) return current;
+
       if (existing.quantity <= 1) {
         const next = { ...current };
         delete next[productId];
         return next;
       }
+
       return {
         ...current,
-        [productId]: { ...existing, quantity: existing.quantity - 1 },
+        [productId]: {
+          ...existing,
+          quantity: existing.quantity - 1,
+        },
       };
     });
   }
 
   const cartItems = Object.values(cart);
-  const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
+
+  const cartCount = cartItems.reduce(
+    (sum, item) => sum + item.quantity,
+    0
+  );
+
   const cartTotal = cartItems.reduce(
-    (sum, item) => sum + item.quantity * item.product.unit_price,
+    (sum, item) =>
+      sum + item.quantity * item.product.unit_price,
     0
   );
 
@@ -78,18 +103,34 @@ export default function SellScreen() {
         stock_quantity: item.product.stock_quantity,
       },
     }));
+
     router.push({
       pathname: "/sell/checkout",
-      params: { cart: JSON.stringify(compactCart) },
+      params: {
+        cart: JSON.stringify(compactCart),
+      },
     });
   }
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <TopHeader title="Sell" subtitle={`${cartCount} item${cartCount === 1 ? "" : "s"} selected`} />
+      <TopHeader
+        title="Sell"
+        subtitle={`${cartCount} item${
+          cartCount === 1 ? "" : "s"
+        } selected`}
+      />
 
+      {/* SEARCH */}
       <View style={styles.searchWrap}>
-        <Ionicons name="search-outline" size={18} color={colors.textMuted} />
+        <View style={styles.searchIcon}>
+          <Ionicons
+            name="search-outline"
+            size={18}
+            color={colors.navy}
+          />
+        </View>
+
         <TextInput
           value={query}
           onChangeText={(text) => {
@@ -100,13 +141,49 @@ export default function SellScreen() {
           placeholderTextColor={colors.textMuted}
           style={styles.searchInput}
         />
+
+        {query.length > 0 && (
+          <Pressable
+            onPress={() => {
+              setQuery("");
+              load("");
+            }}
+            hitSlop={10}
+          >
+            <Ionicons
+              name="close-circle"
+              size={19}
+              color={colors.textMuted}
+            />
+          </Pressable>
+        )}
       </View>
 
+      {/* PRODUCT LIST */}
       <FlatList
         data={products}
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={styles.listContent}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        ListHeaderComponent={
+          products.length > 0 ? (
+            <View style={styles.listHeader}>
+              <View>
+                <Text style={styles.listTitle}>Products</Text>
+                <Text style={styles.listSubtitle}>
+                  Select an item to add it to the sale
+                </Text>
+              </View>
+
+              <View style={styles.productCount}>
+                <Text style={styles.productCountText}>
+                  {products.length}
+                </Text>
+              </View>
+            </View>
+          ) : null
+        }
         ListEmptyComponent={
           <EmptyState
             icon="cart-outline"
@@ -117,38 +194,166 @@ export default function SellScreen() {
         renderItem={({ item }) => {
           const inCart = cart[item.id]?.quantity || 0;
           const outOfStock = item.stock_quantity <= 0;
-          const atMaxStock = inCart >= item.stock_quantity;
+          const atMaxStock =
+            inCart >= item.stock_quantity;
 
           return (
-            <View style={styles.row}>
-              <View style={styles.productCol}>
-                <Text style={styles.productName} numberOfLines={1}>{item.name}</Text>
-                <Text style={styles.productMeta}>
-                  {formatCurrency(item.unit_price)} - Stock: {item.stock_quantity}
-                </Text>
+            <View
+              style={[
+                styles.row,
+                inCart > 0 && styles.rowSelected,
+              ]}
+            >
+              {/* PRODUCT ICON */}
+              <View
+                style={[
+                  styles.productIcon,
+                  outOfStock && styles.productIconDisabled,
+                  inCart > 0 && styles.productIconSelected,
+                ]}
+              >
+                <Ionicons
+                  name="cube-outline"
+                  size={21}
+                  color={
+                    outOfStock
+                      ? colors.textMuted
+                      : inCart > 0
+                      ? colors.gold
+                      : colors.navy
+                  }
+                />
               </View>
 
+              {/* PRODUCT INFO */}
+              <View style={styles.productCol}>
+                <Text
+                  style={[
+                    styles.productName,
+                    outOfStock && styles.productNameDisabled,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {item.name}
+                </Text>
+
+                <View style={styles.productDetails}>
+                  <Text style={styles.productPrice}>
+                    {formatCurrency(item.unit_price)}
+                  </Text>
+
+                  <View style={styles.dot} />
+
+                  <View
+                    style={[
+                      styles.stockBadge,
+                      outOfStock
+                        ? styles.stockBadgeEmpty
+                        : item.stock_quantity <= 5
+                        ? styles.stockBadgeLow
+                        : styles.stockBadgeGood,
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.stockDot,
+                        outOfStock
+                          ? styles.stockDotEmpty
+                          : item.stock_quantity <= 5
+                          ? styles.stockDotLow
+                          : styles.stockDotGood,
+                      ]}
+                    />
+
+                    <Text
+                      style={[
+                        styles.stockText,
+                        outOfStock
+                          ? styles.stockTextEmpty
+                          : item.stock_quantity <= 5
+                          ? styles.stockTextLow
+                          : styles.stockTextGood,
+                      ]}
+                    >
+                      {outOfStock
+                        ? "No stock"
+                        : `${item.stock_quantity} in stock`}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* ACTION */}
               {inCart > 0 ? (
                 <View style={styles.qtyControl}>
-                  <Pressable style={styles.qtyButton} onPress={() => removeFromCart(item.id)}>
-                    <Ionicons name="remove" size={18} color={colors.navy} />
-                  </Pressable>
-                  <Text style={styles.qtyText}>{inCart}</Text>
                   <Pressable
-                    style={[styles.qtyButton, atMaxStock && styles.qtyButtonDisabled]}
+                    style={({ pressed }) => [
+                      styles.qtyButton,
+                      pressed && styles.qtyButtonPressed,
+                    ]}
+                    onPress={() =>
+                      removeFromCart(item.id)
+                    }
+                  >
+                    <Ionicons
+                      name="remove"
+                      size={18}
+                      color={colors.navy}
+                    />
+                  </Pressable>
+
+                  <View style={styles.qtyNumberBox}>
+                    <Text style={styles.qtyText}>
+                      {inCart}
+                    </Text>
+                  </View>
+
+                  <Pressable
+                    style={[
+                      styles.qtyButton,
+                      atMaxStock &&
+                        styles.qtyButtonDisabled,
+                    ]}
                     onPress={() => addToCart(item)}
                     disabled={atMaxStock}
                   >
-                    <Ionicons name="add" size={18} color={atMaxStock ? colors.textMuted : colors.navy} />
+                    <Ionicons
+                      name="add"
+                      size={18}
+                      color={
+                        atMaxStock
+                          ? colors.textMuted
+                          : colors.navy
+                      }
+                    />
                   </Pressable>
                 </View>
               ) : (
                 <Pressable
-                  style={[styles.addButton, outOfStock && styles.addButtonDisabled]}
+                  style={({ pressed }) => [
+                    styles.addButton,
+                    outOfStock &&
+                      styles.addButtonDisabled,
+                    pressed &&
+                      !outOfStock &&
+                      styles.addButtonPressed,
+                  ]}
                   onPress={() => addToCart(item)}
                   disabled={outOfStock}
                 >
-                  <Text style={styles.addButtonText}>{outOfStock ? "No stock" : "Add"}</Text>
+                  <Ionicons
+                    name={
+                      outOfStock
+                        ? "close-circle-outline"
+                        : "add"
+                    }
+                    size={16}
+                    color={colors.white}
+                  />
+
+                  <Text style={styles.addButtonText}>
+                    {outOfStock ? "No stock" : "Add"}
+                  </Text>
                 </Pressable>
               )}
             </View>
@@ -156,11 +361,49 @@ export default function SellScreen() {
         }}
       />
 
+      {/* CART BAR */}
       {cartCount > 0 && (
-        <Pressable style={styles.cartBar} onPress={goToCheckout}>
-          <Text style={styles.cartText}>{cartCount} item{cartCount === 1 ? "" : "s"}</Text>
-          <Text style={styles.cartTotal}>{formatCurrency(cartTotal)}</Text>
-          <Ionicons name="chevron-forward" size={20} color={colors.white} />
+        <Pressable
+          style={({ pressed }) => [
+            styles.cartBar,
+            pressed && styles.cartBarPressed,
+          ]}
+          onPress={goToCheckout}
+        >
+          <View style={styles.cartLeft}>
+            <View style={styles.cartIcon}>
+              <Ionicons
+                name="cart"
+                size={20}
+                color={colors.navy}
+              />
+            </View>
+
+            <View>
+              <Text style={styles.cartText}>
+                {cartCount} item
+                {cartCount === 1 ? "" : "s"}
+              </Text>
+
+              <Text style={styles.cartSubtext}>
+                View checkout
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.cartRight}>
+            <Text style={styles.cartTotal}>
+              {formatCurrency(cartTotal)}
+            </Text>
+
+            <View style={styles.cartArrow}>
+              <Ionicons
+                name="chevron-forward"
+                size={18}
+                color={colors.white}
+              />
+            </View>
+          </View>
         </Pressable>
       )}
 
@@ -170,76 +413,379 @@ export default function SellScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.cream },
+  safe: {
+    flex: 1,
+    backgroundColor: colors.cream,
+  },
+
+  /* SEARCH */
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
     backgroundColor: colors.white,
-    margin: spacing.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  searchInput: { flex: 1, fontSize: 14, color: colors.text },
-  listContent: { paddingHorizontal: spacing.md, paddingBottom: bottomNavHeight + 100, flexGrow: 1 },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md,
-    backgroundColor: colors.white,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.md,
+    marginHorizontal: spacing.md,
+    marginTop: spacing.md,
     marginBottom: spacing.sm,
+    minHeight: 52,
+    paddingHorizontal: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
   },
-  productCol: { flex: 1, minWidth: 0 },
-  productName: { fontSize: 15, fontWeight: "800", color: colors.text },
-  productMeta: { fontSize: 12, color: colors.textMuted, marginTop: 3 },
-  addButton: {
-    minWidth: 76,
-    alignItems: "center",
-    borderRadius: radius.full,
-    backgroundColor: colors.navy,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 9,
-  },
-  addButtonDisabled: { backgroundColor: colors.textMuted },
-  addButtonText: { color: colors.white, fontWeight: "800", fontSize: 12 },
-  qtyControl: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  qtyButton: {
+
+  searchIcon: {
     width: 34,
     height: 34,
     borderRadius: 17,
+    backgroundColor: colors.cream,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 8,
+  },
+
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: colors.text,
+    paddingVertical: 8,
+  },
+
+  /* LIST */
+  listContent: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    paddingBottom:
+      bottomNavHeight + 100,
+    flexGrow: 1,
+  },
+
+  listHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: spacing.sm,
+    paddingHorizontal: 2,
+  },
+
+  listTitle: {
+    fontSize: 17,
+    fontWeight: "900",
+    color: colors.navy,
+  },
+
+  listSubtitle: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 3,
+  },
+
+  productCount: {
+    minWidth: 32,
+    height: 30,
+    paddingHorizontal: 8,
+    borderRadius: radius.full,
+    backgroundColor: colors.navy,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  productCountText: {
+    color: colors.white,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+
+  /* PRODUCT ROW */
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+    backgroundColor: colors.white,
+    borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
+    padding: 12,
+    marginBottom: spacing.sm,
+
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.035,
+    shadowRadius: 6,
+    elevation: 1,
+  },
+
+  rowSelected: {
+    borderColor: colors.gold,
+    backgroundColor: "#FFFDF7",
+  },
+
+  productIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: colors.cream,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  productIconSelected: {
+    backgroundColor: colors.navy,
+  },
+
+  productIconDisabled: {
+    backgroundColor: "#EEEEEE",
+  },
+
+  productCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  productName: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: colors.text,
+  },
+
+  productNameDisabled: {
+    color: colors.textMuted,
+  },
+
+  productDetails: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 6,
+  },
+
+  productPrice: {
+    fontSize: 12,
+    color: colors.navy,
+    fontWeight: "800",
+  },
+
+  dot: {
+    width: 3,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: colors.textMuted,
+    marginHorizontal: 7,
+  },
+
+  /* STOCK BADGE */
+  stockBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: radius.full,
+  },
+
+  stockBadgeGood: {
+    backgroundColor: "rgba(46, 125, 50, 0.09)",
+  },
+
+  stockBadgeLow: {
+    backgroundColor: "rgba(217, 169, 40, 0.13)",
+  },
+
+  stockBadgeEmpty: {
+    backgroundColor: "rgba(100, 100, 100, 0.08)",
+  },
+
+  stockDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    marginRight: 4,
+  },
+
+  stockDotGood: {
+    backgroundColor: "#2E7D32",
+  },
+
+  stockDotLow: {
+    backgroundColor: colors.gold,
+  },
+
+  stockDotEmpty: {
+    backgroundColor: colors.textMuted,
+  },
+
+  stockText: {
+    fontSize: 9,
+    fontWeight: "700",
+  },
+
+  stockTextGood: {
+    color: "#2E7D32",
+  },
+
+  stockTextLow: {
+    color: colors.navy,
+  },
+
+  stockTextEmpty: {
+    color: colors.textMuted,
+  },
+
+  /* ADD BUTTON */
+  addButton: {
+    minWidth: 72,
+    height: 38,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    borderRadius: radius.full,
+    backgroundColor: colors.navy,
+    paddingHorizontal: 13,
+  },
+
+  addButtonDisabled: {
+    backgroundColor: colors.textMuted,
+  },
+
+  addButtonPressed: {
+    opacity: 0.8,
+    transform: [{ scale: 0.96 }],
+  },
+
+  addButtonText: {
+    color: colors.white,
+    fontWeight: "800",
+    fontSize: 11,
+  },
+
+  /* QUANTITY */
+  qtyControl: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.cream,
+    borderRadius: radius.full,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+
+  qtyButton: {
+    width: 31,
+    height: 31,
+    borderRadius: 16,
     backgroundColor: colors.white,
     alignItems: "center",
     justifyContent: "center",
   },
-  qtyButtonDisabled: { opacity: 0.45 },
-  qtyText: { minWidth: 22, textAlign: "center", fontSize: 16, fontWeight: "900", color: colors.text },
+
+  qtyButtonPressed: {
+    backgroundColor: "#F1EFE7",
+    transform: [{ scale: 0.92 }],
+  },
+
+  qtyButtonDisabled: {
+    opacity: 0.4,
+  },
+
+  qtyNumberBox: {
+    minWidth: 30,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  qtyText: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: colors.navy,
+  },
+
+  /* CART BAR */
   cartBar: {
     position: "absolute",
     left: spacing.md,
     right: spacing.md,
     bottom: bottomNavHeight + spacing.sm,
-    minHeight: 58,
-    borderRadius: radius.sm,
+    minHeight: 66,
+    borderRadius: radius.md,
     backgroundColor: colors.navy,
-    paddingHorizontal: spacing.md,
+    paddingLeft: 9,
+    paddingRight: 10,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 6,
-    elevation: 7,
+    shadowOffset: {
+      width: 0,
+      height: 5,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    elevation: 9,
   },
-  cartText: { color: colors.white, fontSize: 14, fontWeight: "800" },
-  cartTotal: { color: colors.white, fontSize: 17, fontWeight: "900" },
+
+  cartBarPressed: {
+    transform: [{ scale: 0.985 }],
+    opacity: 0.95,
+  },
+
+  cartLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+
+  cartIcon: {
+    width: 45,
+    height: 45,
+    borderRadius: 14,
+    backgroundColor: colors.goldLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  cartText: {
+    color: colors.white,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+
+  cartSubtext: {
+    color: colors.goldLight,
+    fontSize: 10,
+    marginTop: 2,
+    fontWeight: "600",
+  },
+
+  cartRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  cartTotal: {
+    color: colors.white,
+    fontSize: 17,
+    fontWeight: "900",
+  },
+
+  cartArrow: {
+    width: 31,
+    height: 31,
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });
+

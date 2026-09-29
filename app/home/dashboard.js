@@ -42,6 +42,7 @@ export default function DashboardScreen() {
   const db = useSQLiteContext();
   const router = useRouter();
   const { user } = useAuth();
+
   const [stats, setStats] = useState({
     todaySales: 0,
     cashSales: 0,
@@ -57,21 +58,30 @@ export default function DashboardScreen() {
 
       async function loadDashboard() {
         const todayIso = new Date().toISOString().slice(0, 10);
-        const [summaryRows, outstanding, lowStock, itemRow] = await Promise.all([
-          getDailySalesSummary(db, 1),
-          getTotalOutstanding(db),
-          getLowStockProducts(db),
-          db.getFirstAsync(
-            `SELECT COALESCE(SUM(quantity), 0) AS total
-             FROM transactions
-             WHERE type = 'credit' AND date(created_at) = date('now')`
-          ),
-        ]);
+
+        const [summaryRows, outstanding, lowStock, itemRow] =
+          await Promise.all([
+            getDailySalesSummary(db, 1),
+            getTotalOutstanding(db),
+            getLowStockProducts(db),
+            db.getFirstAsync(
+              `SELECT COALESCE(SUM(quantity), 0) AS total
+               FROM transactions
+               WHERE type = 'credit' AND date(created_at) = date('now')`
+            ),
+          ]);
 
         if (!active) return;
 
-        const todaySummary = summaryRows.find((row) => row.date === todayIso);
-        const utangSales = todaySummary?.credit_total ?? todaySummary?.total_credit_sales ?? 0;
+        const todaySummary = summaryRows.find(
+          (row) => row.date === todayIso
+        );
+
+        const utangSales =
+          todaySummary?.credit_total ??
+          todaySummary?.total_credit_sales ??
+          0;
+
         const cashSales = todaySummary?.cash_total ?? 0;
 
         setStats({
@@ -79,7 +89,8 @@ export default function DashboardScreen() {
           cashSales,
           utangSales,
           outstanding,
-          itemsSold: todaySummary?.item_count ?? itemRow?.total ?? 0,
+          itemsSold:
+            todaySummary?.item_count ?? itemRow?.total ?? 0,
           lowStockCount: lowStock.length,
         });
       }
@@ -104,45 +115,147 @@ export default function DashboardScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <TopHeader title="Home" subtitle={user?.storeName || "My Store"} />
+      <TopHeader
+        title="Home"
+        subtitle={user?.storeName || "My Store"}
+      />
 
-      <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.dateText}>{todayLabel}</Text>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.container}
+      >
+        {/* DATE / WELCOME AREA */}
+        <View style={styles.welcomeArea}>
+          <View>
+            <Text style={styles.welcomeSmall}>TODAY'S OVERVIEW</Text>
+            <Text style={styles.dateText}>{todayLabel}</Text>
+          </View>
 
+          <View style={styles.calendarIcon}>
+            <Ionicons
+              name="calendar-outline"
+              size={22}
+              color={colors.gold}
+            />
+          </View>
+        </View>
+
+        {/* SALES SUMMARY */}
         <View style={styles.summaryRow}>
-          <MetricCard label="Today's Sales" value={formatCurrency(stats.todaySales)} tone="good" />
+          <MetricCard
+            label="Today's Sales"
+            value={formatCurrency(stats.todaySales)}
+            tone="good"
+            icon="trending-up"
+          />
+
           <MetricCard
             label="Outstanding Utang"
             value={formatCurrency(stats.outstanding)}
             tone="danger"
+            icon="alert-circle"
           />
         </View>
 
+        {/* LOW STOCK ALERT */}
         {stats.lowStockCount > 0 && (
           <Pressable
-            style={styles.alertBanner}
-            onPress={() => router.push({ pathname: "/inventory", params: { filter: "low" } })}
+            style={({ pressed }) => [
+              styles.alertBanner,
+              pressed && styles.alertPressed,
+            ]}
+            onPress={() => router.push("/reports")}
           >
-            <Ionicons name="warning" size={22} color={colors.danger} />
-            <Text style={styles.alertText}>
-              {stats.lowStockCount} product{stats.lowStockCount === 1 ? "" : "s"} low on
-              stock - tap to review
-            </Text>
+            <View style={styles.alertIconContainer}>
+              <Ionicons
+                name="warning"
+                size={22}
+                color={colors.danger}
+              />
+            </View>
+
+            <View style={styles.alertContent}>
+              <Text style={styles.alertTitle}>Low Stock Alert</Text>
+
+              <Text style={styles.alertText}>
+                {stats.lowStockCount} product
+                {stats.lowStockCount === 1 ? "" : "s"} low on stock
+              </Text>
+            </View>
+
+            <View style={styles.alertArrow}>
+              <Ionicons
+                name="chevron-forward"
+                size={19}
+                color={colors.danger}
+              />
+            </View>
           </Pressable>
         )}
 
-        <SectionTitle title="Quick Actions" />
+        {/* QUICK ACTIONS */}
+        <SectionHeader
+          title="Quick Actions"
+          subtitle="Manage your store"
+        />
+
         <View style={styles.actionGrid}>
           {quickActions.map((item) => (
-            <ActionCard key={item.title} item={item} onPress={() => router.push(item.route)} />
+            <ActionCard
+              key={item.title}
+              item={item}
+              onPress={() => router.push(item.route)}
+            />
           ))}
         </View>
 
-        <SectionTitle title="Today at a Glance" />
-        <View style={styles.glanceRow}>
-          <GlanceCard label="Cash Sales" value={formatCurrency(stats.cashSales)} />
-          <GlanceCard label="Utang Sales" value={formatCurrency(stats.utangSales)} danger />
-          <GlanceCard label="Items Sold" value={String(stats.itemsSold)} />
+        {/* TODAY AT A GLANCE */}
+        <SectionHeader
+          title="Today at a Glance"
+          subtitle="Your daily activity"
+        />
+
+        <View style={styles.glanceContainer}>
+          <GlanceCard
+            label="Cash Sales"
+            value={formatCurrency(stats.cashSales)}
+            icon="cash-outline"
+            iconType="cash"
+          />
+
+          <GlanceCard
+            label="Utang Sales"
+            value={formatCurrency(stats.utangSales)}
+            icon="wallet-outline"
+            iconType="danger"
+            danger
+          />
+
+          <GlanceCard
+            label="Items Sold"
+            value={String(stats.itemsSold)}
+            icon="cube-outline"
+            iconType="items"
+          />
+        </View>
+
+        {/* BOTTOM DECORATIVE BRAND AREA */}
+        <View style={styles.brandFooter}>
+          <View style={styles.brandLine} />
+
+          <View style={styles.brandMark}>
+            <Ionicons
+              name="stats-chart"
+              size={14}
+              color={colors.gold}
+            />
+          </View>
+
+          <Text style={styles.brandFooterText}>
+            Track & Tally
+          </Text>
+
+          <View style={styles.brandLine} />
         </View>
       </ScrollView>
 
@@ -151,20 +264,164 @@ export default function DashboardScreen() {
   );
 }
 
-function SectionTitle({ title }) {
-  return <Text style={styles.sectionTitle}>{title}</Text>;
+/* -------------------------------------------------------------------------- */
+/* SECTION HEADER */
+/* -------------------------------------------------------------------------- */
+
+function SectionHeader({ title, subtitle }) {
+  return (
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionTitleRow}>
+        <View style={styles.sectionAccent} />
+
+        <View>
+          <Text style={styles.sectionTitle}>{title}</Text>
+          <Text style={styles.sectionSubtitle}>{subtitle}</Text>
+        </View>
+      </View>
+    </View>
+  );
 }
 
-function MetricCard({ label, value, tone }) {
+/* -------------------------------------------------------------------------- */
+/* METRIC CARD */
+/* -------------------------------------------------------------------------- */
+
+function MetricCard({ label, value, tone, icon }) {
+  const isDanger = tone === "danger";
+
   return (
     <View style={styles.metricCard}>
+      <View style={styles.metricTop}>
+        <View
+          style={[
+            styles.metricIcon,
+            isDanger
+              ? styles.metricIconDanger
+              : styles.metricIconGood,
+          ]}
+        >
+          <Ionicons
+            name={icon}
+            size={20}
+            color={isDanger ? colors.danger : colors.success}
+          />
+        </View>
+
+        <Ionicons
+          name="ellipsis-horizontal"
+          size={19}
+          color={colors.border}
+        />
+      </View>
+
       <Text style={styles.metricLabel}>{label}</Text>
+
       <Text
         style={[
           styles.metricValue,
           tone === "good" && styles.metricGood,
           tone === "danger" && styles.metricDanger,
         ]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+      >
+        {value}
+      </Text>
+
+      <View
+        style={[
+          styles.metricBottomLine,
+          isDanger
+            ? styles.metricBottomDanger
+            : styles.metricBottomGood,
+        ]}
+      />
+    </View>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* QUICK ACTION CARD */
+/* -------------------------------------------------------------------------- */
+
+function ActionCard({ item, onPress }) {
+  return (
+    <Pressable
+      style={({ pressed }) => [
+        styles.actionCard,
+        pressed && styles.pressed,
+      ]}
+      onPress={onPress}
+    >
+      <View style={styles.actionIconOuter}>
+        <View style={styles.actionIconInner}>
+          <Ionicons
+            name={item.icon}
+            size={27}
+            color={colors.navy}
+          />
+        </View>
+      </View>
+
+      <View style={styles.actionTextContainer}>
+        <Text style={styles.actionTitle}>{item.title}</Text>
+
+        <View style={styles.actionArrow}>
+          <Ionicons
+            name="arrow-forward"
+            size={14}
+            color={colors.gold}
+          />
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* GLANCE CARD */
+/* -------------------------------------------------------------------------- */
+
+function GlanceCard({
+  label,
+  value,
+  icon,
+  iconType,
+  danger,
+}) {
+  return (
+    <View style={styles.glanceCard}>
+      <View
+        style={[
+          styles.glanceIcon,
+          iconType === "danger" && styles.glanceIconDanger,
+          iconType === "cash" && styles.glanceIconCash,
+          iconType === "items" && styles.glanceIconItems,
+        ]}
+      >
+        <Ionicons
+          name={icon}
+          size={19}
+          color={
+            danger
+              ? colors.danger
+              : iconType === "cash"
+              ? colors.success
+              : colors.navy
+          }
+        />
+      </View>
+
+      <Text style={styles.glanceLabel}>{label}</Text>
+
+      <Text
+        style={[
+          styles.glanceValue,
+          danger && styles.metricDanger,
+        ]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
       >
         {value}
       </Text>
@@ -172,147 +429,424 @@ function MetricCard({ label, value, tone }) {
   );
 }
 
-function ActionCard({ item, onPress }) {
-  return (
-    <Pressable style={({ pressed }) => [styles.actionCard, pressed && styles.pressed]} onPress={onPress}>
-      <Ionicons name={item.icon} size={34} color={colors.navy} />
-      <Text style={styles.actionTitle}>{item.title}</Text>
-    </Pressable>
-  );
-}
-
-function GlanceCard({ label, value, danger }) {
-  return (
-    <View style={styles.glanceCard}>
-      <Text style={styles.glanceLabel}>{label}</Text>
-      <Text style={[styles.glanceValue, danger && styles.metricDanger]}>{value}</Text>
-    </View>
-  );
-}
+/* -------------------------------------------------------------------------- */
+/* STYLES */
+/* -------------------------------------------------------------------------- */
 
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: colors.cream,
   },
+
   container: {
     flexGrow: 1,
-    padding: spacing.md,
-    paddingBottom: bottomNavHeight + spacing.xl,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    paddingBottom: bottomNavHeight + spacing.xl + 10,
     gap: spacing.md,
   },
+
+  /* DATE */
+
+  welcomeArea: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 2,
+  },
+
+  welcomeSmall: {
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.4,
+    color: colors.gold,
+    marginBottom: 4,
+  },
+
   dateText: {
     fontSize: 18,
-    color: colors.textMuted,
-    fontWeight: "500",
+    color: colors.navy,
+    fontWeight: "800",
   },
-  summaryRow: {
-    flexDirection: "row",
-    gap: spacing.md,
-  },
-  metricCard: {
-    flex: 1,
-    minHeight: 88,
-    backgroundColor: colors.white,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
+
+  calendarIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 15,
+    backgroundColor: colors.navy,
     alignItems: "center",
     justifyContent: "center",
-    padding: spacing.sm,
+
+    shadowColor: colors.navy,
+    shadowOffset: {
+      width: 0,
+      height: 5,
+    },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
   },
+
+  /* SUMMARY */
+
+  summaryRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+
+  metricCard: {
+    flex: 1,
+    minHeight: 145,
+    backgroundColor: colors.white,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    overflow: "hidden",
+
+    shadowColor: colors.navy,
+    shadowOffset: {
+      width: 0,
+      height: 5,
+    },
+    shadowOpacity: 0.07,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+
+  metricTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+
+  metricIcon: {
+    width: 39,
+    height: 39,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  metricIconGood: {
+    backgroundColor: "#EAF6EF",
+  },
+
+  metricIconDanger: {
+    backgroundColor: "#FDECEA",
+  },
+
   metricLabel: {
-    fontSize: 14,
+    fontSize: 12,
     color: colors.textMuted,
-    fontWeight: "600",
-    textAlign: "center",
+    fontWeight: "700",
+    marginBottom: 4,
   },
+
   metricValue: {
-    marginTop: 6,
-    fontSize: 22,
+    fontSize: 20,
     color: colors.navy,
     fontWeight: "900",
   },
+
   metricGood: {
     color: colors.success,
   },
+
   metricDanger: {
     color: colors.danger,
   },
+
+  metricBottomLine: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 4,
+  },
+
+  metricBottomGood: {
+    backgroundColor: colors.success,
+  },
+
+  metricBottomDanger: {
+    backgroundColor: colors.danger,
+  },
+
+  /* ALERT */
+
   alertBanner: {
-    minHeight: 58,
-    backgroundColor: "#FDECEA",
-    borderRadius: radius.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    minHeight: 76,
+    backgroundColor: "#FFF7F5",
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: "#F1D2CD",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
+
+    shadowColor: colors.danger,
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    shadowOpacity: 0.06,
+    shadowRadius: 7,
+    elevation: 2,
   },
-  alertText: {
+
+  alertPressed: {
+    opacity: 0.8,
+    transform: [{ scale: 0.99 }],
+  },
+
+  alertIconContainer: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: "#FDECEA",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 11,
+  },
+
+  alertContent: {
     flex: 1,
+  },
+
+  alertTitle: {
+    fontSize: 13,
+    fontWeight: "900",
     color: colors.danger,
-    fontSize: 14,
-    fontWeight: "800",
+    marginBottom: 3,
   },
+
+  alertText: {
+    fontSize: 11.5,
+    color: colors.textMuted,
+    fontWeight: "600",
+    lineHeight: 17,
+  },
+
+  alertArrow: {
+    width: 32,
+    height: 32,
+    borderRadius: 11,
+    backgroundColor: "#FDECEA",
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 8,
+  },
+
+  /* SECTION */
+
+  sectionHeader: {
+    marginTop: 3,
+    marginBottom: -3,
+  },
+
+  sectionTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  sectionAccent: {
+    width: 4,
+    height: 28,
+    borderRadius: 4,
+    backgroundColor: colors.gold,
+    marginRight: 10,
+  },
+
   sectionTitle: {
-    ...typography.heading,
-    color: colors.text,
     fontSize: 18,
+    fontWeight: "900",
+    color: colors.navy,
   },
+
+  sectionSubtitle: {
+    marginTop: 1,
+    fontSize: 10.5,
+    fontWeight: "600",
+    color: colors.textMuted,
+  },
+
+  /* QUICK ACTIONS */
+
   actionGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
-    gap: spacing.sm,
+    rowGap: spacing.sm,
   },
+
   actionCard: {
     width: "48.5%",
-    minHeight: 112,
+    minHeight: 126,
     backgroundColor: colors.white,
-    borderRadius: radius.sm,
+    borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
+    padding: 13,
+    justifyContent: "space-between",
+
+    shadowColor: colors.navy,
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+
+  actionIconOuter: {
+    width: 49,
+    height: 49,
+    borderRadius: 16,
+    backgroundColor: "#F7F4EA",
     alignItems: "center",
     justifyContent: "center",
-    padding: spacing.md,
-    gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: "#ECE4CD",
   },
+
+  actionIconInner: {
+    width: 39,
+    height: 39,
+    borderRadius: 13,
+    backgroundColor: colors.white,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  actionTextContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 12,
+  },
+
+  actionTitle: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "800",
+    marginRight: 5,
+  },
+
+  actionArrow: {
+    width: 25,
+    height: 25,
+    borderRadius: 9,
+    backgroundColor: "#F7F4EA",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
   pressed: {
     opacity: 0.78,
+    transform: [{ scale: 0.985 }],
   },
-  actionTitle: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: "800",
-    textAlign: "center",
-  },
-  glanceRow: {
+
+  /* GLANCE */
+
+  glanceContainer: {
     flexDirection: "row",
     gap: spacing.sm,
   },
+
   glanceCard: {
     flex: 1,
-    minHeight: 86,
+    minHeight: 124,
     backgroundColor: colors.white,
-    borderRadius: radius.sm,
+    borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
     alignItems: "center",
     justifyContent: "center",
-    padding: spacing.sm,
+    padding: 10,
+
+    shadowColor: colors.navy,
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
+
+  glanceIcon: {
+    width: 39,
+    height: 39,
+    borderRadius: 13,
+    backgroundColor: "#F1F4F8",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 9,
+  },
+
+  glanceIconCash: {
+    backgroundColor: "#EAF6EF",
+  },
+
+  glanceIconDanger: {
+    backgroundColor: "#FDECEA",
+  },
+
+  glanceIconItems: {
+    backgroundColor: "#F7F4EA",
+  },
+
   glanceLabel: {
-    fontSize: 14,
+    fontSize: 10.5,
     color: colors.textMuted,
-    fontWeight: "600",
+    fontWeight: "700",
     textAlign: "center",
   },
+
   glanceValue: {
-    marginTop: spacing.sm,
-    fontSize: 20,
-    color: colors.text,
+    marginTop: 4,
+    fontSize: 16,
+    color: colors.navy,
     fontWeight: "900",
     textAlign: "center",
+  },
+
+  /* FOOTER */
+
+  brandFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 5,
+    paddingVertical: 8,
+    gap: 8,
+  },
+
+  brandLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.border,
+  },
+
+  brandMark: {
+    width: 27,
+    height: 27,
+    borderRadius: 9,
+    backgroundColor: colors.navy,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  brandFooterText: {
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+    color: colors.textMuted,
   },
 });

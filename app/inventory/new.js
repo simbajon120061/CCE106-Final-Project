@@ -1,9 +1,18 @@
-import { View, Text, StyleSheet, TextInput, ScrollView, Pressable, Alert } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  ScrollView,
+  Pressable,
+  Alert,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useState } from "react";
 import { useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
+
 import Button from "@/components/Button";
 import BottomNav, { bottomNavHeight } from "@/components/BottomNav";
 import { colors, spacing, typography, radius } from "@/constants/theme";
@@ -12,6 +21,7 @@ import { createProduct } from "@/db/database";
 export default function NewProductScreen() {
   const db = useSQLiteContext();
   const router = useRouter();
+
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
   const [price, setPrice] = useState("");
@@ -21,10 +31,15 @@ export default function NewProductScreen() {
 
   async function handleSave() {
     if (!name.trim() || !price) {
-      Alert.alert("Missing info", "Product name and unit price are required.");
+      Alert.alert(
+        "Missing info",
+        "Product name and unit price are required."
+      );
       return;
     }
+
     setSaving(true);
+
     try {
       await createProduct(db, {
         name: name.trim(),
@@ -33,6 +48,7 @@ export default function NewProductScreen() {
         stock_quantity: Number(stock) || 0,
         low_stock_threshold: Number(threshold) || 5,
       });
+
       router.back();
     } finally {
       setSaving(false);
@@ -41,98 +57,474 @@ export default function NewProductScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
+      {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={12}>
-          <Ionicons name="close" size={24} color={colors.navy} />
+        <Pressable
+          onPress={() => router.back()}
+          hitSlop={12}
+          style={({ pressed }) => [
+            styles.backButton,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Ionicons
+            name="arrow-back"
+            size={21}
+            color={colors.navy}
+          />
         </Pressable>
-        <Text style={styles.title}>New product</Text>
-        <View style={{ width: 24 }} />
+
+        <View style={styles.headerTitleWrap}>
+          <Text style={styles.title}>New Product</Text>
+          <Text style={styles.headerSubtitle}>
+            Add an item to your inventory
+          </Text>
+        </View>
+
+        <View style={styles.headerIcon}>
+          <Ionicons
+            name="cube-outline"
+            size={21}
+            color={colors.navy}
+          />
+        </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.form}>
-        <Field label="Product name *">
-          <TextInput
-            value={name}
-            onChangeText={setName}
-            placeholder="e.g. Lucky Me Pancit Canton"
-            placeholderTextColor={colors.textMuted}
-            style={styles.input}
-          />
-        </Field>
-        <Field label="Category">
-          <TextInput
-            value={category}
-            onChangeText={setCategory}
-            placeholder="e.g. Noodles, Canned goods, Load"
-            placeholderTextColor={colors.textMuted}
-            style={styles.input}
-          />
-        </Field>
-        <Field label="Unit price (₱) *">
-          <TextInput
-            value={price}
-            onChangeText={setPrice}
-            keyboardType="decimal-pad"
-            placeholder="0.00"
-            placeholderTextColor={colors.textMuted}
-            style={styles.input}
-          />
-        </Field>
-        <Field label="Starting stock quantity">
-          <TextInput
-            value={stock}
-            onChangeText={setStock}
-            keyboardType="number-pad"
-            placeholder="0"
-            placeholderTextColor={colors.textMuted}
-            style={styles.input}
-          />
-        </Field>
-        <Field label="Low stock alert threshold">
-          <TextInput
-            value={threshold}
-            onChangeText={setThreshold}
-            keyboardType="number-pad"
-            style={styles.input}
-          />
-        </Field>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={styles.form}
+      >
+        {/* Intro Card */}
+        <View style={styles.introCard}>
+          <View style={styles.introIcon}>
+            <Ionicons
+              name="cube"
+              size={26}
+              color={colors.white}
+            />
+          </View>
 
-        <Button title="Save product" onPress={handleSave} loading={saving} />
+          <View style={styles.introContent}>
+            <Text style={styles.introTitle}>
+              Product information
+            </Text>
+
+            <Text style={styles.introText}>
+              Enter the basic details of the product you want to
+              keep in your inventory.
+            </Text>
+          </View>
+        </View>
+
+        {/* Product Details */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionIcon}>
+              <Ionicons
+                name="information-circle-outline"
+                size={18}
+                color={colors.navy}
+              />
+            </View>
+
+            <View>
+              <Text style={styles.sectionTitle}>
+                Product details
+              </Text>
+              <Text style={styles.sectionSubtitle}>
+                Basic product information
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.fieldsCard}>
+            <Field
+              label="Product name *"
+              icon="pricetag-outline"
+            >
+              <TextInput
+                value={name}
+                onChangeText={setName}
+                placeholder="e.g. Lucky Me Pancit Canton"
+                placeholderTextColor={colors.textMuted}
+                style={styles.input}
+              />
+            </Field>
+
+            <Field
+              label="Category"
+              icon="grid-outline"
+            >
+              <TextInput
+                value={category}
+                onChangeText={setCategory}
+                placeholder="e.g. Noodles, Canned goods, Load"
+                placeholderTextColor={colors.textMuted}
+                style={styles.input}
+              />
+            </Field>
+
+            <Field
+              label="Unit price (₱) *"
+              icon="cash-outline"
+            >
+              <View style={styles.inputWithPrefix}>
+                <View style={styles.currencyBox}>
+                  <Text style={styles.currencyText}>₱</Text>
+                </View>
+
+                <TextInput
+                  value={price}
+                  onChangeText={setPrice}
+                  keyboardType="decimal-pad"
+                  placeholder="0.00"
+                  placeholderTextColor={colors.textMuted}
+                  style={styles.priceInput}
+                />
+              </View>
+            </Field>
+          </View>
+        </View>
+
+        {/* Inventory Details */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionIcon}>
+              <Ionicons
+                name="layers-outline"
+                size={18}
+                color={colors.navy}
+              />
+            </View>
+
+            <View>
+              <Text style={styles.sectionTitle}>
+                Inventory details
+              </Text>
+              <Text style={styles.sectionSubtitle}>
+                Stock and low-stock settings
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.fieldsCard}>
+            <Field
+              label="Starting stock quantity"
+              icon="cube-outline"
+            >
+              <TextInput
+                value={stock}
+                onChangeText={setStock}
+                keyboardType="number-pad"
+                placeholder="0"
+                placeholderTextColor={colors.textMuted}
+                style={styles.input}
+              />
+            </Field>
+
+            <Field
+              label="Low stock alert threshold"
+              icon="notifications-outline"
+            >
+              <TextInput
+                value={threshold}
+                onChangeText={setThreshold}
+                keyboardType="number-pad"
+                style={styles.input}
+              />
+
+              <View style={styles.helperRow}>
+                <Ionicons
+                  name="information-circle-outline"
+                  size={15}
+                  color={colors.textMuted}
+                />
+
+                <Text style={styles.helperText}>
+                  You'll see a low-stock indicator when inventory
+                  reaches this quantity.
+                </Text>
+              </View>
+            </Field>
+          </View>
+        </View>
+
+        {/* Save Button */}
+        <View style={styles.saveSection}>
+          <Button
+            title="Save product"
+            onPress={handleSave}
+            loading={saving}
+          />
+        </View>
+
+        <View style={styles.bottomSpace} />
       </ScrollView>
+
       <BottomNav activeTab="inventory" />
     </SafeAreaView>
   );
 }
 
-function Field({ label, children }) {
+function Field({ label, icon, children }) {
   return (
-    <View style={{ gap: 6 }}>
-      <Text style={styles.label}>{label}</Text>
+    <View style={styles.field}>
+      <View style={styles.labelRow}>
+        <Ionicons
+          name={icon}
+          size={16}
+          color={colors.navy}
+        />
+
+        <Text style={styles.label}>{label}</Text>
+      </View>
+
       {children}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.cream },
+  safe: {
+    flex: 1,
+    backgroundColor: colors.cream,
+  },
+
+  /* Header */
   header: {
+    minHeight: 76,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    backgroundColor: colors.cream,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  title: { ...typography.heading },
-  form: { padding: spacing.md, gap: spacing.md, paddingBottom: bottomNavHeight + spacing.xl },
-  label: { ...typography.label },
-  input: {
+
+  backButton: {
+    width: 42,
+    height: 42,
+    borderRadius: radius.full,
     backgroundColor: colors.white,
     borderWidth: 1,
     borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  headerTitleWrap: {
+    flex: 1,
+    alignItems: "center",
+    paddingHorizontal: spacing.sm,
+  },
+
+  title: {
+    ...typography.heading,
+    fontSize: 19,
+    color: colors.navy,
+  },
+
+  headerSubtitle: {
+    marginTop: 2,
+    fontSize: 11,
+    color: colors.textMuted,
+    fontWeight: "600",
+  },
+
+  headerIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: radius.full,
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  pressed: {
+    opacity: 0.7,
+    transform: [{ scale: 0.96 }],
+  },
+
+  /* Main Form */
+  form: {
+    padding: spacing.md,
+    paddingTop: spacing.md,
+    paddingBottom: bottomNavHeight + 100,
+    gap: spacing.lg,
+  },
+
+  /* Intro */
+  introCard: {
+    backgroundColor: colors.navy,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    overflow: "hidden",
+  },
+
+  introIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.md,
+    backgroundColor: "rgba(255,255,255,0.14)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  introContent: {
+    flex: 1,
+  },
+
+  introTitle: {
+    color: colors.white,
+    fontSize: 16,
+    fontWeight: "800",
+    marginBottom: 4,
+  },
+
+  introText: {
+    color: "rgba(255,255,255,0.72)",
+    fontSize: 12,
+    lineHeight: 18,
+  },
+
+  /* Sections */
+  section: {
+    gap: spacing.sm,
+  },
+
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingHorizontal: 2,
+  },
+
+  sectionIcon: {
+    width: 36,
+    height: 36,
     borderRadius: radius.sm,
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  sectionTitle: {
+    color: colors.navy,
+    fontSize: 15,
+    fontWeight: "800",
+  },
+
+  sectionSubtitle: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginTop: 2,
+  },
+
+  /* Fields Card */
+  fieldsCard: {
+    backgroundColor: colors.white,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    gap: spacing.md,
+  },
+
+  field: {
+    gap: 7,
+  },
+
+  labelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+  },
+
+  label: {
+    ...typography.label,
+    color: colors.navy,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  input: {
+    minHeight: 50,
+    backgroundColor: colors.cream,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: colors.text,
+  },
+
+  inputWithPrefix: {
+    minHeight: 50,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.cream,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    overflow: "hidden",
+  },
+
+  currencyBox: {
+    height: 50,
+    width: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.navy,
+  },
+
+  currencyText: {
+    color: colors.white,
+    fontSize: 18,
+    fontWeight: "800",
+  },
+
+  priceInput: {
+    flex: 1,
+    minHeight: 50,
     paddingHorizontal: spacing.md,
     paddingVertical: 12,
     fontSize: 15,
     color: colors.text,
+    fontWeight: "600",
+  },
+
+  helperRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    paddingHorizontal: 2,
+  },
+
+  helperText: {
+    flex: 1,
+    fontSize: 11,
+    lineHeight: 16,
+    color: colors.textMuted,
+  },
+
+  /* Save */
+  saveSection: {
+    marginTop: spacing.xs,
+  },
+
+  bottomSpace: {
+    height: 10,
   },
 });
+

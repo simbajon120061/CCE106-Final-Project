@@ -1,198 +1,957 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
+import { useState } from 'react';
+
 import {
-  View,
-  Text,
-  StyleSheet,
-  TextInput,
-  Pressable,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { useState } from "react";
-import { useRouter } from "expo-router";
-import { useSQLiteContext } from "expo-sqlite";
-import { Ionicons } from "@expo/vector-icons";
-import Button from "@/components/Button";
-import Card from "@/components/Card";
-import { colors, spacing, typography, radius } from "@/constants/theme";
-import { createUser, getUserByPhone } from "@/db/database";
-import { normalizePhoneNumber } from "@/lib/auth";
-import { useAuth } from "@/context/AuthContext";
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+
+import { useSQLiteContext } from 'expo-sqlite';
+
+import {
+  createUser,
+  getUserByPhone,
+} from '@/db/database';
+
+import { colors } from '@/constants/theme';
 
 export default function SignupScreen() {
   const db = useSQLiteContext();
-  const router = useRouter();
-  const { login } = useAuth();
 
-  const [storeName, setStoreName] = useState("");
-  const [phoneNumber, setPhoneNumber] = useState("");
-  const [pin, setPin] = useState("");
-  const [confirmPin, setConfirmPin] = useState("");
+  const [storeName, setStoreName] = useState('');
+  const [ownerName, setOwnerName] = useState('');
+  const [phone, setPhone] = useState('');
+
+  const [pin, setPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
+
+  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  /*
+   * =====================================================
+   * SIGNUP
+   * =====================================================
+   */
+
   async function handleSignup() {
-    const normalizedPhone = normalizePhoneNumber(phoneNumber);
+    setError('');
 
-    if (!storeName.trim() || !normalizedPhone || !pin || !confirmPin) {
-      Alert.alert("Missing Fields", "Please fill in all required fields.");
+    if (
+      !storeName.trim() ||
+      !ownerName.trim() ||
+      !phone.trim() ||
+      !pin.trim() ||
+      !confirmPin.trim()
+    ) {
+      setError('Please fill in all fields.');
       return;
     }
 
-    if (!/^\d{4}$/.test(pin)) {
-      Alert.alert("Invalid PIN", "Choose a 4-digit PIN code.");
+    if (!/^\d{4}$/.test(pin.trim())) {
+      setError('PIN must be exactly 4 digits.');
       return;
     }
 
-    if (pin !== confirmPin) {
-      Alert.alert("PIN Mismatch", "PIN codes do not match.");
+    if (pin.trim() !== confirmPin.trim()) {
+      setError('PINs do not match.');
       return;
     }
 
-    setLoading(true);
+    const cleanedPhone = phone.replace(/\D/g, '');
+
+    if (
+      cleanedPhone.length < 7 ||
+      cleanedPhone.length > 15
+    ) {
+      setError('Please enter a valid phone number.');
+      return;
+    }
+
     try {
-      const existingUser = await getUserByPhone(db, normalizedPhone);
+      setLoading(true);
+
+      /*
+       * CHECK IF PHONE NUMBER ALREADY EXISTS
+       */
+      const existingUser = await getUserByPhone(
+        db,
+        cleanedPhone
+      );
+
       if (existingUser) {
-        Alert.alert("Account Exists", "An account with this phone number already exists.");
+        setError(
+          'An account with this phone number already exists.'
+        );
+
         setLoading(false);
         return;
       }
 
-      const userId = await createUser(db, {
+      /*
+       * CREATE USER USING YOUR EXISTING SQLITE DATABASE
+       *
+       * Your database function accepts:
+       * phoneNumber
+       * pin
+       * storeName
+       */
+      await createUser(db, {
+        phoneNumber: cleanedPhone,
+        pin: pin.trim(),
         storeName: storeName.trim(),
-        phoneNumber: normalizedPhone,
-        pin,
       });
 
-      await login({
-        id: userId,
-        phoneNumber: normalizedPhone,
-        storeName: storeName.trim(),
-      });
-    } catch (_error) {
-      Alert.alert("Error", "Could not create account. Please try again.");
-    } finally {
+      /*
+       * OWNER NAME
+       *
+       * Your current users table does not have an
+       * owner_name column, so keep this locally.
+       */
+      try {
+        await AsyncStorage.setItem(
+          'ownerName',
+          ownerName.trim()
+        );
+
+        await AsyncStorage.setItem(
+          'storeName',
+          storeName.trim()
+        );
+      } catch (storageError) {
+        console.warn(
+          'Could not save owner/store name locally',
+          storageError
+        );
+      }
+
       setLoading(false);
+
+      /*
+       * GO TO LOGIN
+       */
+      router.replace('/login');
+
+    } catch (err) {
+      console.error('Signup error:', err);
+
+      setLoading(false);
+
+      const message =
+        err?.message?.toLowerCase?.() || '';
+
+      if (
+        message.includes('unique') ||
+        message.includes('constraint')
+      ) {
+        setError(
+          'This phone number is already registered.'
+        );
+        return;
+      }
+
+      setError(
+        err?.message ||
+        'Something went wrong. Please try again.'
+      );
     }
   }
 
+  /*
+   * =====================================================
+   * PIN INPUT
+   * =====================================================
+   */
+
+  function handlePinChange(value, setter) {
+    setter(
+      value
+        .replace(/[^0-9]/g, '')
+        .slice(0, 4)
+    );
+  }
+
+  /*
+   * =====================================================
+   * UI
+   * =====================================================
+   */
+
   return (
-    <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={styles.container}>
-          <View style={styles.header}>
-            <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={12}>
-              <Ionicons name="chevron-back" size={24} color={colors.navy} />
-            </Pressable>
-            <Text style={styles.title}>Create Account</Text>
-            <Text style={styles.subtitle}>Set up your sari-sari store ledger</Text>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={
+        Platform.OS === 'ios'
+          ? 'padding'
+          : 'height'
+      }
+      keyboardVerticalOffset={
+        Platform.OS === 'ios'
+          ? 0
+          : 20
+      }
+    >
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+
+        {/* =================================================
+            TOP BRAND
+        ================================================= */}
+
+        <View style={styles.brandSection}>
+
+          <View style={styles.logoGlow}>
+
+            <View style={styles.logoBox}>
+
+              <Image
+                source={require('../assets/icon.png')}
+                style={styles.logoImage}
+                resizeMode="contain"
+              />
+
+            </View>
+
           </View>
 
-          <Card style={styles.formCard}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Store Name</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. Aling Nena's Store"
-                placeholderTextColor={colors.textMuted}
-                value={storeName}
-                onChangeText={setStoreName}
-              />
+          <Text style={styles.brandText}>
+            TRACK&TALLY
+          </Text>
+
+          <Text style={styles.brandTagline}>
+            SIMPLE STORE MANAGEMENT
+          </Text>
+
+        </View>
+
+        {/* =================================================
+            HEADER
+        ================================================= */}
+
+        <View style={styles.headerSection}>
+
+          <Text style={styles.title}>
+            Create your store
+          </Text>
+
+          <Text style={styles.subtitle}>
+            Set up your account and start
+            {'\n'}
+            managing your store with ease.
+          </Text>
+
+        </View>
+
+        {/* =================================================
+            FORM CARD
+        ================================================= */}
+
+        <View style={styles.formCard}>
+
+          {/* CARD HEADER */}
+
+          <View style={styles.cardHeader}>
+
+            <View style={styles.cardHeaderLine} />
+
+            <View>
+
+              <Text style={styles.cardTitle}>
+                STORE INFORMATION
+              </Text>
+
+              <Text style={styles.cardSubtitle}>
+                Enter your account details below
+              </Text>
+
             </View>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Phone Number</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="09XXXXXXXXX"
-                placeholderTextColor={colors.textMuted}
-                keyboardType="phone-pad"
-                value={phoneNumber}
-                onChangeText={(value) => setPhoneNumber(normalizePhoneNumber(value))}
-              />
-            </View>
+          </View>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>4-Digit PIN</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="0000"
-                placeholderTextColor={colors.textMuted}
-                secureTextEntry
-                keyboardType="number-pad"
-                maxLength={4}
-                value={pin}
-                onChangeText={(value) => setPin(value.replace(/\D/g, ""))}
-              />
-            </View>
+          {/* =================================================
+              STORE NAME
+          ================================================= */}
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Confirm PIN</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="0000"
-                placeholderTextColor={colors.textMuted}
-                secureTextEntry
-                keyboardType="number-pad"
-                maxLength={4}
-                value={confirmPin}
-                onChangeText={(value) => setConfirmPin(value.replace(/\D/g, ""))}
-              />
-            </View>
+          <View style={styles.fieldContainer}>
 
-            <Button
-              title={loading ? "Registering..." : "Register Store"}
-              onPress={handleSignup}
-              disabled={loading}
-              style={{ marginTop: spacing.sm }}
+            <Text style={styles.label}>
+              Store name
+            </Text>
+
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. Aling Nena's Store"
+              placeholderTextColor="#AAA79E"
+              value={storeName}
+              onChangeText={setStoreName}
+              autoCapitalize="words"
+              editable={!loading}
             />
-          </Card>
 
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>Already have an account?</Text>
-            <Pressable onPress={() => router.push("/login")}>
-              <Text style={styles.linkText}>Sign In</Text>
-            </Pressable>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+
+          {/* =================================================
+              OWNER NAME
+          ================================================= */}
+
+          <View style={styles.fieldContainer}>
+
+            <Text style={styles.label}>
+              Owner name
+            </Text>
+
+            <TextInput
+              style={styles.input}
+              placeholder="Juan Dela Cruz"
+              placeholderTextColor="#AAA79E"
+              value={ownerName}
+              onChangeText={setOwnerName}
+              autoCapitalize="words"
+              editable={!loading}
+            />
+
+          </View>
+
+          {/* =================================================
+              PHONE
+          ================================================= */}
+
+          <View style={styles.fieldContainer}>
+
+            <Text style={styles.label}>
+              Phone number
+            </Text>
+
+            <View style={styles.phoneInputContainer}>
+
+              <View style={styles.phonePrefix}>
+
+                <Text style={styles.phonePrefixText}>
+                  PH
+                </Text>
+
+              </View>
+
+              <TextInput
+                style={styles.phoneInput}
+                placeholder="09XXXXXXXXX"
+                placeholderTextColor="#AAA79E"
+                value={phone}
+                onChangeText={(value) =>
+                  setPhone(
+                    value
+                      .replace(/\D/g, '')
+                      .slice(0, 15)
+                  )
+                }
+                keyboardType="phone-pad"
+                editable={!loading}
+                maxLength={15}
+              />
+
+            </View>
+
+          </View>
+
+          {/* =================================================
+              SECURITY HEADER
+          ================================================= */}
+
+          <View style={styles.securityHeader}>
+
+            <View style={styles.securityIcon}>
+
+              <Text style={styles.securityIconText}>
+                •
+              </Text>
+
+            </View>
+
+            <View>
+
+              <Text style={styles.securityTitle}>
+                SECURITY PIN
+              </Text>
+
+              <Text style={styles.securitySubtitle}>
+                Create a 4-digit PIN
+              </Text>
+
+            </View>
+
+          </View>
+
+          {/* =================================================
+              PIN
+          ================================================= */}
+
+          <View style={styles.fieldContainer}>
+
+            <Text style={styles.label}>
+              4-digit PIN
+            </Text>
+
+            <TextInput
+              style={[
+                styles.input,
+                styles.pinInput,
+              ]}
+              placeholder="••••"
+              placeholderTextColor="#AAA79E"
+              value={pin}
+              onChangeText={(value) =>
+                handlePinChange(
+                  value,
+                  setPin
+                )
+              }
+              keyboardType="number-pad"
+              secureTextEntry
+              maxLength={4}
+              editable={!loading}
+            />
+
+            <Text style={styles.helperText}>
+              Use a PIN that you can easily remember.
+            </Text>
+
+          </View>
+
+          {/* =================================================
+              CONFIRM PIN
+          ================================================= */}
+
+          <View style={styles.fieldContainer}>
+
+            <Text style={styles.label}>
+              Confirm PIN
+            </Text>
+
+            <TextInput
+              style={[
+                styles.input,
+                styles.pinInput,
+              ]}
+              placeholder="••••"
+              placeholderTextColor="#AAA79E"
+              value={confirmPin}
+              onChangeText={(value) =>
+                handlePinChange(
+                  value,
+                  setConfirmPin
+                )
+              }
+              keyboardType="number-pad"
+              secureTextEntry
+              maxLength={4}
+              editable={!loading}
+            />
+
+          </View>
+
+          {/* =================================================
+              ERROR
+          ================================================= */}
+
+          {error ? (
+            <View style={styles.errorBox}>
+
+              <View style={styles.errorIcon}>
+
+                <Text style={styles.errorIconText}>
+                  !
+                </Text>
+
+              </View>
+
+              <Text style={styles.errorText}>
+                {error}
+              </Text>
+
+            </View>
+          ) : null}
+
+          {/* =================================================
+              SIGN UP BUTTON
+          ================================================= */}
+
+          <TouchableOpacity
+            style={[
+              styles.signupButton,
+              loading &&
+                styles.disabledButton,
+            ]}
+            onPress={handleSignup}
+            disabled={loading}
+            activeOpacity={0.85}
+          >
+
+            <View style={styles.buttonInner}>
+
+              <Text style={styles.signupText}>
+                {loading
+                  ? 'CREATING ACCOUNT...'
+                  : 'CREATE ACCOUNT'}
+              </Text>
+
+              {!loading && (
+                <Text style={styles.arrow}>
+                  →
+                </Text>
+              )}
+
+            </View>
+
+          </TouchableOpacity>
+
+        </View>
+
+        {/* =================================================
+            LOGIN
+        ================================================= */}
+
+        <View style={styles.loginSection}>
+
+          <Text style={styles.loginQuestion}>
+            Already have an account?
+          </Text>
+
+          <TouchableOpacity
+            onPress={() =>
+              router.push('/login')
+            }
+            disabled={loading}
+            activeOpacity={0.7}
+          >
+
+            <Text style={styles.loginLink}>
+              LOG IN
+            </Text>
+
+          </TouchableOpacity>
+
+        </View>
+
+        {/* =================================================
+            FOOTER
+        ================================================= */}
+
+        <Text style={styles.footer}>
+          Track&Tally • Simple Store Management
+        </Text>
+
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
+/*
+ * =====================================================
+ * STYLES
+ * =====================================================
+ */
+
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.cream },
-  container: { 
-    flexGrow: 1, 
-    padding: spacing.md, 
-    justifyContent: "flex-start", 
-    paddingTop: spacing.xl * 1.9, 
+
+  container: {
+    flex: 1,
+    backgroundColor: colors.cream,
   },
-  header: { alignItems: "center", marginBottom: spacing.lg, position: "relative" },
-  backBtn: { position: "absolute", left: 0, top: 10 },
-  title: { ...typography.title, textAlign: "center" },
-  subtitle: { ...typography.label, textAlign: "center", marginTop: 4 },
-  formCard: { gap: spacing.md },
-  inputGroup: { gap: 6 },
-  label: { ...typography.label, fontSize: 12 },
+
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 22,
+    paddingTop: 28,
+    paddingBottom: 30,
+  },
+
+  /* BRAND */
+
+  brandSection: {
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+
+  logoGlow: {
+    width: 112,
+    height: 112,
+    borderRadius: 32,
+    backgroundColor: '#EEE9DA',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+
+  logoBox: {
+    width: 94,
+    height: 94,
+    borderRadius: 27,
+    backgroundColor: colors.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+
+    shadowColor: colors.navy,
+    shadowOffset: {
+      width: 0,
+      height: 5,
+    },
+    shadowOpacity: 0.10,
+    shadowRadius: 10,
+
+    elevation: 3,
+  },
+
+  logoImage: {
+    width: 82,
+    height: 82,
+    borderRadius: 22,
+  },
+
+  brandText: {
+    fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 2.5,
+    color: colors.navy,
+  },
+
+  brandTagline: {
+    fontSize: 8,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+    color: colors.gold,
+    marginTop: 3,
+  },
+
+  /* HEADER */
+
+  headerSection: {
+    alignItems: 'center',
+    marginBottom: 22,
+  },
+
+  title: {
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: '900',
+    color: colors.navy,
+    textAlign: 'center',
+    letterSpacing: -0.5,
+  },
+
+  subtitle: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: 7,
+    paddingHorizontal: 20,
+  },
+
+  /* FORM CARD */
+
+  formCard: {
+    backgroundColor: colors.white,
+    borderRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 22,
+    paddingBottom: 22,
+
+    borderWidth: 1,
+    borderColor: '#E9E6DD',
+
+    shadowColor: colors.navy,
+    shadowOffset: {
+      width: 0,
+      height: 8,
+    },
+    shadowOpacity: 0.08,
+    shadowRadius: 18,
+
+    elevation: 4,
+  },
+
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 5,
+  },
+
+  cardHeaderLine: {
+    width: 4,
+    height: 36,
+    borderRadius: 4,
+    backgroundColor: colors.gold,
+    marginRight: 11,
+  },
+
+  cardTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    color: colors.navy,
+  },
+
+  cardSubtitle: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+
+  /* INPUTS */
+
+  fieldContainer: {
+    marginTop: 15,
+  },
+
+  label: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.navy,
+    marginBottom: 7,
+    letterSpacing: 0.2,
+  },
+
   input: {
+    height: 51,
+    backgroundColor: '#FAFAF8',
+    borderRadius: 13,
+    paddingHorizontal: 15,
+    fontSize: 14,
+    color: colors.text,
+
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: radius.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-    fontSize: 15,
+  },
+
+  pinInput: {
+    letterSpacing: 7,
+    fontWeight: '800',
+  },
+
+  helperText: {
+    fontSize: 10,
+    color: colors.textMuted,
+    marginTop: 6,
+  },
+
+  /* PHONE */
+
+  phoneInputContainer: {
+    height: 51,
+    flexDirection: 'row',
+    alignItems: 'center',
+
+    backgroundColor: '#FAFAF8',
+
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: colors.border,
+
+    overflow: 'hidden',
+  },
+
+  phonePrefix: {
+    height: '100%',
+    paddingHorizontal: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+
+    backgroundColor: '#F0EEE6',
+
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
+  },
+
+  phonePrefixText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: colors.navy,
+    letterSpacing: 0.5,
+  },
+
+  phoneInput: {
+    flex: 1,
+    height: '100%',
+    paddingHorizontal: 13,
+    fontSize: 14,
     color: colors.text,
-    backgroundColor: colors.white,
   },
+
+  /* SECURITY */
+
+  securityHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 25,
+    marginBottom: 1,
+    paddingTop: 18,
+
+    borderTopWidth: 1,
+    borderTopColor: '#EEECE5',
+  },
+
+  securityIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#F4EAC7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+
+  securityIconText: {
+    color: colors.gold,
+    fontSize: 25,
+    fontWeight: '900',
+    lineHeight: 26,
+  },
+
+  securityTitle: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: colors.navy,
+    letterSpacing: 1,
+  },
+
+  securitySubtitle: {
+    fontSize: 10,
+    color: colors.textMuted,
+    marginTop: 1,
+  },
+
+  /* ERROR */
+
+  errorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+
+    backgroundColor: '#FFF2F0',
+
+    borderWidth: 1,
+    borderColor: '#F2D2CD',
+
+    borderRadius: 11,
+
+    paddingHorizontal: 11,
+    paddingVertical: 10,
+
+    marginTop: 15,
+  },
+
+  errorIcon: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: colors.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+
+  errorIconText: {
+    color: colors.white,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  errorText: {
+    flex: 1,
+    color: colors.danger,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '600',
+  },
+
+  /* BUTTON */
+
+  signupButton: {
+    height: 55,
+    backgroundColor: colors.gold,
+    borderRadius: 14,
+
+    alignItems: 'center',
+    justifyContent: 'center',
+
+    marginTop: 22,
+
+    shadowColor: colors.gold,
+    shadowOffset: {
+      width: 0,
+      height: 5,
+    },
+    shadowOpacity: 0.20,
+    shadowRadius: 9,
+
+    elevation: 4,
+  },
+
+  disabledButton: {
+    opacity: 0.60,
+  },
+
+  buttonInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  signupText: {
+    color: colors.white,
+    fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 1.1,
+  },
+
+  arrow: {
+    color: colors.white,
+    fontSize: 21,
+    fontWeight: '700',
+    marginLeft: 10,
+    marginTop: -2,
+  },
+
+  /* LOGIN */
+
+  loginSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 21,
+  },
+
+  loginQuestion: {
+    color: colors.textMuted,
+    fontSize: 12,
+  },
+
+  loginLink: {
+    color: colors.navy,
+    fontSize: 12,
+    fontWeight: '900',
+    marginLeft: 5,
+    letterSpacing: 0.5,
+  },
+
+  /* FOOTER */
+
   footer: {
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 6,
-    marginTop: spacing.lg,
+    color: '#AAA79E',
+    fontSize: 9,
+    textAlign: 'center',
+    marginTop: 20,
+    letterSpacing: 0.2,
   },
-  footerText: { fontSize: 14, color: colors.textMuted },
-  linkText: { fontSize: 14, fontWeight: "700", color: colors.navy },
 });
