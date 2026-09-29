@@ -1,4 +1,4 @@
-
+// index.js
 import { useCallback, useState } from "react";
 import {
   View,

@@ -1,4 +1,5 @@
-
+// app/debtors/add-credit.js
+import { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -7,25 +8,20 @@ import {
   ScrollView,
   Pressable,
   Alert,
-  FlatList,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useEffect, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
 
 import Button from "@/components/Button";
 import BottomNav, { bottomNavHeight } from "@/components/BottomNav";
-import {
-  colors,
-  spacing,
-  typography,
-  radius,
-} from "@/constants/theme";
+import { colors, spacing, typography, radius } from "@/constants/theme";
 import { formatCurrency } from "@/lib/format";
 import {
   addCreditTransaction,
+  createSale,
+  getDebtor,
   getProducts,
 } from "@/db/database";
 
@@ -34,46 +30,83 @@ export default function AddCreditScreen() {
   const db = useSQLiteContext();
   const router = useRouter();
 
+  const [debtor, setDebtor] = useState(null);
   const [products, setProducts] = useState([]);
-  const [selectedProduct, setSelectedProduct] = useState(null);
-  const [quantity, setQuantity] = useState("1");
-  const [amount, setAmount] = useState("");
+  const [query, setQuery] = useState("");
+  const [cart, setCart] = useState({});
+  const [manualAmount, setManualAmount] = useState("");
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const load = useCallback(
+    async (q) => {
+      const rows = await getProducts(db, q?.trim() || undefined);
+      setProducts(rows);
+    },
+    [db]
+  );
 
   useEffect(() => {
-    getProducts(db).then(setProducts);
-  }, [db]);
+    load("");
+    getDebtor(db, Number(debtorId)).then(setDebtor);
+  }, [db, debtorId, load]);
 
-  function calculateProductAmount(product, nextQuantity) {
-    const qty = Number(nextQuantity) || 0;
-    return (product.unit_price * qty).toFixed(2);
+  /* ------------------------------ CART ------------------------------ */
+
+  function addToCart(product) {
+    setCart((current) => {
+      const currentQuantity = current[product.id]?.quantity || 0;
+
+      if (currentQuantity + 1 > product.stock_quantity) return current;
+
+      return {
+        ...current,
+        [product.id]: { product, quantity: currentQuantity + 1 },
+      };
+    });
   }
 
-  function handleSelectProduct(product) {
-    setSelectedProduct(product);
-    setAmount(calculateProductAmount(product, quantity));
-    setPickerOpen(false);
+  function removeFromCart(productId) {
+    setCart((current) => {
+      const existing = current[productId];
+      if (!existing) return current;
+
+      if (existing.quantity <= 1) {
+        const next = { ...current };
+        delete next[productId];
+        return next;
+      }
+
+      return {
+        ...current,
+        [productId]: { ...existing, quantity: existing.quantity - 1 },
+      };
+    });
   }
 
-  function handleQuantityChange(nextQuantity) {
-    setQuantity(nextQuantity);
+  const cartItems = Object.values(cart);
 
-    if (selectedProduct) {
-      setAmount(
-        calculateProductAmount(selectedProduct, nextQuantity)
-      );
-    }
-  }
+  const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
+
+  const cartTotal = cartItems.reduce(
+    (sum, item) => sum + item.quantity * item.product.unit_price,
+    0
+  );
+
+  const hasProducts = cartItems.length > 0;
+
+  // With products selected, the amount is calculated from the cart.
+  // With no products, the user types the amount manually.
+  const amountValue = hasProducts ? cartTotal.toFixed(2) : manualAmount;
+  const amountNumber = hasProducts ? cartTotal : Number(manualAmount) || 0;
+
+  /* ------------------------------ SAVE ------------------------------ */
 
   async function handleSave() {
-    const amt = Number(amount);
-
-    if (!amt || amt <= 0) {
+    if (!hasProducts && amountNumber <= 0) {
       Alert.alert(
         "Invalid amount",
-        "Enter an amount greater than zero."
+        "Select products or enter an amount greater than zero."
       );
       return;
     }
@@ -81,24 +114,179 @@ export default function AddCreditScreen() {
     setSaving(true);
 
     try {
-      await addCreditTransaction(db, {
-        debtorId: Number(debtorId),
-        amount: amt,
-        description:
-          description.trim() ||
-          selectedProduct?.name ||
-          null,
-        productId: selectedProduct?.id ?? null,
-        quantity: selectedProduct
-          ? Number(quantity) || 1
-          : null,
-      });
+      if (hasProducts) {
+        await createSale(db, {
+          saleType: "credit",
+          debtorId: Number(debtorId),
+          items: cartItems,
+          description: description.trim() || null,
+        });
+      } else {
+        await addCreditTransaction(db, {
+          debtorId: Number(debtorId),
+          amount: amountNumber,
+          description: description.trim() || null,
+          productId: null,
+          quantity: null,
+        });
+      }
 
       router.back();
+    } catch (error) {
+      Alert.alert(
+        "Could not save credit sale",
+        error.message || "Please check stock and try again."
+      );
     } finally {
       setSaving(false);
     }
   }
+
+  /* --------------------------- PRODUCT ROW --------------------------- */
+
+  function renderProduct(item) {
+    const inCart = cart[item.id]?.quantity || 0;
+    const outOfStock = item.stock_quantity <= 0;
+    const atMaxStock = inCart >= item.stock_quantity;
+    const lowStock = item.stock_quantity <= 5;
+
+    return (
+      <View
+        key={item.id}
+        style={[styles.row, inCart > 0 && styles.rowSelected]}
+      >
+        {/* PRODUCT ICON */}
+        <View
+          style={[
+            styles.productIcon,
+            outOfStock && styles.productIconDisabled,
+            inCart > 0 && styles.productIconSelected,
+          ]}
+        >
+          <Ionicons
+            name="cube-outline"
+            size={21}
+            color={
+              outOfStock
+                ? colors.textMuted
+                : inCart > 0
+                ? colors.gold
+                : colors.navy
+            }
+          />
+        </View>
+
+        {/* PRODUCT INFO */}
+        <View style={styles.productCol}>
+          <Text
+            style={[
+              styles.productName,
+              outOfStock && styles.productNameDisabled,
+            ]}
+            numberOfLines={1}
+          >
+            {item.name}
+          </Text>
+
+          <View style={styles.productDetails}>
+            <Text style={styles.productPrice}>
+              {formatCurrency(item.unit_price)}
+            </Text>
+
+            <View style={styles.dot} />
+
+            <View
+              style={[
+                styles.stockBadge,
+                outOfStock
+                  ? styles.stockBadgeEmpty
+                  : lowStock
+                  ? styles.stockBadgeLow
+                  : styles.stockBadgeGood,
+              ]}
+            >
+              <View
+                style={[
+                  styles.stockDot,
+                  outOfStock
+                    ? styles.stockDotEmpty
+                    : lowStock
+                    ? styles.stockDotLow
+                    : styles.stockDotGood,
+                ]}
+              />
+
+              <Text
+                style={[
+                  styles.stockText,
+                  outOfStock
+                    ? styles.stockTextEmpty
+                    : lowStock
+                    ? styles.stockTextLow
+                    : styles.stockTextGood,
+                ]}
+              >
+                {outOfStock ? "No stock" : `${item.stock_quantity} in stock`}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* ACTION */}
+        {inCart > 0 ? (
+          <View style={styles.qtyControl}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.qtyButton,
+                pressed && styles.qtyButtonPressed,
+              ]}
+              onPress={() => removeFromCart(item.id)}
+            >
+              <Ionicons name="remove" size={18} color={colors.navy} />
+            </Pressable>
+
+            <View style={styles.qtyNumberBox}>
+              <Text style={styles.qtyText}>{inCart}</Text>
+            </View>
+
+            <Pressable
+              style={[styles.qtyButton, atMaxStock && styles.qtyButtonDisabled]}
+              onPress={() => addToCart(item)}
+              disabled={atMaxStock}
+            >
+              <Ionicons
+                name="add"
+                size={18}
+                color={atMaxStock ? colors.textMuted : colors.navy}
+              />
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable
+            style={({ pressed }) => [
+              styles.addButton,
+              outOfStock && styles.addButtonDisabled,
+              pressed && !outOfStock && styles.addButtonPressed,
+            ]}
+            onPress={() => addToCart(item)}
+            disabled={outOfStock}
+          >
+            <Ionicons
+              name={outOfStock ? "close-circle-outline" : "add"}
+              size={16}
+              color={colors.white}
+            />
+
+            <Text style={styles.addButtonText}>
+              {outOfStock ? "No stock" : "Add"}
+            </Text>
+          </Pressable>
+        )}
+      </View>
+    );
+  }
+
+  /* ------------------------------- UI ------------------------------- */
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -112,16 +300,12 @@ export default function AddCreditScreen() {
             pressed && styles.pressed,
           ]}
         >
-          <Ionicons
-            name="arrow-back"
-            size={21}
-            color={colors.navy}
-          />
+          <Ionicons name="arrow-back" size={21} color={colors.navy} />
         </Pressable>
 
         <View style={styles.headerTitleWrap}>
-          <Text style={styles.headerEyebrow}>
-            DEBTOR ACCOUNT
+          <Text style={styles.headerEyebrow} numberOfLines={1}>
+            {debtor ? debtor.full_name.toUpperCase() : "DEBTOR ACCOUNT"}
           </Text>
           <Text style={styles.title}>Log credit sale</Text>
         </View>
@@ -131,6 +315,7 @@ export default function AddCreditScreen() {
 
       <ScrollView
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.form}
       >
         {/* HERO CARD */}
@@ -144,258 +329,106 @@ export default function AddCreditScreen() {
           </View>
 
           <View style={styles.heroText}>
-            <Text style={styles.heroTitle}>
-              New credit sale
-            </Text>
+            <Text style={styles.heroTitle}>New credit sale</Text>
 
             <Text style={styles.heroSubtitle}>
-              Record an item or amount to add to the debtor's
-              balance.
+              Record items or an amount to add to the debtor's balance.
             </Text>
           </View>
         </View>
 
-        {/* PRODUCT SECTION */}
+        {/* PRODUCTS (same UI as Sell) */}
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeader}>
             <View style={styles.sectionIcon}>
-              <Ionicons
-                name="cube-outline"
-                size={19}
-                color={colors.navy}
-              />
+              <Ionicons name="cube-outline" size={19} color={colors.navy} />
             </View>
 
             <View style={styles.sectionHeaderText}>
-              <Text style={styles.sectionTitle}>
-                Product
-              </Text>
+              <Text style={styles.sectionTitle}>Products</Text>
               <Text style={styles.sectionSubtitle}>
-                Optional inventory item
+                Optional inventory items
+              </Text>
+            </View>
+
+            <View style={styles.productCount}>
+              <Text style={styles.productCountText}>
+                {cartCount} selected
               </Text>
             </View>
           </View>
 
-          <Text style={styles.label}>
-            Link a product (optional)
-          </Text>
+          {/* SEARCH */}
+          <View style={styles.searchWrap}>
+            <View style={styles.searchIcon}>
+              <Ionicons name="search-outline" size={18} color={colors.navy} />
+            </View>
 
-          <Pressable
-            style={({ pressed }) => [
-              styles.productPicker,
-              pickerOpen && styles.productPickerOpen,
-              pressed && styles.pressedLight,
-            ]}
-            onPress={() => setPickerOpen((v) => !v)}
-          >
-            <View style={styles.productPickerLeft}>
-              <View
-                style={[
-                  styles.productPickerIcon,
-                  selectedProduct &&
-                    styles.productPickerIconSelected,
-                ]}
+            <TextInput
+              value={query}
+              onChangeText={(text) => {
+                setQuery(text);
+                load(text);
+              }}
+              placeholder="Search products..."
+              placeholderTextColor={colors.textMuted}
+              style={styles.searchInput}
+            />
+
+            {query.length > 0 && (
+              <Pressable
+                onPress={() => {
+                  setQuery("");
+                  load("");
+                }}
+                hitSlop={10}
               >
                 <Ionicons
-                  name={
-                    selectedProduct
-                      ? "cube"
-                      : "search-outline"
-                  }
+                  name="close-circle"
                   size={19}
-                  color={
-                    selectedProduct
-                      ? colors.goldDark
-                      : colors.textMuted
-                  }
+                  color={colors.textMuted}
+                />
+              </Pressable>
+            )}
+          </View>
+
+          {/* PRODUCT LIST */}
+          {products.length === 0 ? (
+            <View style={styles.emptyProductsWrap}>
+              <View style={styles.emptyIcon}>
+                <Ionicons
+                  name="cube-outline"
+                  size={22}
+                  color={colors.textMuted}
                 />
               </View>
 
-              <View style={styles.productPickerTextWrap}>
-                <Text
-                  numberOfLines={1}
-                  style={
-                    selectedProduct
-                      ? styles.productText
-                      : styles.productPlaceholder
-                  }
-                >
-                  {selectedProduct
-                    ? selectedProduct.name
-                    : "Select from inventory"}
-                </Text>
-
-                {selectedProduct && (
-                  <Text style={styles.productUnitPrice}>
-                    {formatCurrency(
-                      selectedProduct.unit_price
-                    )}{" "}
-                    per unit
-                  </Text>
-                )}
-              </View>
+              <Text style={styles.emptyProducts}>
+                {query.trim()
+                  ? "No products match your search."
+                  : "No inventory items yet."}
+              </Text>
             </View>
-
-            <Ionicons
-              name={
-                pickerOpen
-                  ? "chevron-up"
-                  : "chevron-down"
-              }
-              size={19}
-              color={colors.textMuted}
-            />
-          </Pressable>
-
-          {/* DROPDOWN */}
-          {pickerOpen && (
-            <View style={styles.dropdown}>
-              {products.length === 0 ? (
-                <View style={styles.emptyProductsWrap}>
-                  <View style={styles.emptyIcon}>
-                    <Ionicons
-                      name="cube-outline"
-                      size={22}
-                      color={colors.textMuted}
-                    />
-                  </View>
-
-                  <Text style={styles.emptyProducts}>
-                    No inventory items yet.
-                  </Text>
-                </View>
-              ) : (
-                <FlatList
-                  data={products}
-                  keyExtractor={(p) => String(p.id)}
-                  style={styles.productList}
-                  showsVerticalScrollIndicator={false}
-                  renderItem={({ item }) => (
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.dropdownRow,
-                        selectedProduct?.id === item.id &&
-                          styles.dropdownRowSelected,
-                        pressed && styles.pressedLight,
-                      ]}
-                      onPress={() =>
-                        handleSelectProduct(item)
-                      }
-                    >
-                      <View style={styles.dropdownLeft}>
-                        <View style={styles.dropdownIcon}>
-                          <Ionicons
-                            name="cube-outline"
-                            size={17}
-                            color={colors.navy}
-                          />
-                        </View>
-
-                        <View style={styles.dropdownNameWrap}>
-                          <Text
-                            style={styles.dropdownName}
-                            numberOfLines={1}
-                          >
-                            {item.name}
-                          </Text>
-
-                          <Text style={styles.dropdownSmall}>
-                            Inventory item
-                          </Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.priceBadge}>
-                        <Text style={styles.dropdownPrice}>
-                          {formatCurrency(
-                            item.unit_price
-                          )}
-                        </Text>
-                      </View>
-                    </Pressable>
-                  )}
-                />
-              )}
-
-              {selectedProduct && (
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.clearRow,
-                    pressed && styles.pressedLight,
-                  ]}
-                  onPress={() => {
-                    setSelectedProduct(null);
-                    setAmount("");
-                    setPickerOpen(false);
-                  }}
-                >
-                  <Ionicons
-                    name="close-circle-outline"
-                    size={18}
-                    color={colors.danger}
-                  />
-
-                  <Text style={styles.clearText}>
-                    Clear selection
-                  </Text>
-                </Pressable>
-              )}
-            </View>
+          ) : (
+            <ScrollView
+              style={styles.productScroll}
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {products.map(renderProduct)}
+            </ScrollView>
           )}
         </View>
-
-        {/* QUANTITY */}
-        {selectedProduct && (
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionIcon}>
-                <Ionicons
-                  name="layers-outline"
-                  size={19}
-                  color={colors.navy}
-                />
-              </View>
-
-              <View style={styles.sectionHeaderText}>
-                <Text style={styles.sectionTitle}>
-                  Quantity
-                </Text>
-                <Text style={styles.sectionSubtitle}>
-                  Number of units sold
-                </Text>
-              </View>
-            </View>
-
-            <Text style={styles.label}>Quantity</Text>
-
-            <View style={styles.inputWrapper}>
-              <Ionicons
-                name="layers-outline"
-                size={19}
-                color={colors.textMuted}
-                style={styles.inputIcon}
-              />
-
-              <TextInput
-                value={quantity}
-                onChangeText={handleQuantityChange}
-                keyboardType="number-pad"
-                style={styles.inputWithIcon}
-              />
-            </View>
-          </View>
-        )}
 
         {/* AMOUNT */}
         <View style={styles.amountCard}>
           <View style={styles.amountTop}>
             <View>
-              <Text style={styles.amountEyebrow}>
-                CREDIT AMOUNT
-              </Text>
+              <Text style={styles.amountEyebrow}>CREDIT AMOUNT</Text>
 
               <Text style={styles.amountLabel}>
-                Amount to add
+                {hasProducts ? "Total of selected products" : "Amount to add"}
               </Text>
             </View>
 
@@ -412,8 +445,9 @@ export default function AddCreditScreen() {
             <Text style={styles.currencySymbol}>₱</Text>
 
             <TextInput
-              value={amount}
-              onChangeText={setAmount}
+              value={amountValue}
+              onChangeText={setManualAmount}
+              editable={!hasProducts}
               keyboardType="decimal-pad"
               placeholder="0.00"
               placeholderTextColor="#FFFFFF66"
@@ -424,12 +458,10 @@ export default function AddCreditScreen() {
           <View style={styles.amountDivider} />
 
           <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>
-              Outstanding credit
-            </Text>
+            <Text style={styles.totalLabel}>Outstanding credit</Text>
 
             <Text style={styles.totalValue}>
-              {formatCurrency(Number(amount) || 0)}
+              {formatCurrency(amountNumber)}
             </Text>
           </View>
         </View>
@@ -446,9 +478,7 @@ export default function AddCreditScreen() {
             </View>
 
             <View style={styles.sectionHeaderText}>
-              <Text style={styles.sectionTitle}>
-                Description
-              </Text>
+              <Text style={styles.sectionTitle}>Description</Text>
               <Text style={styles.sectionSubtitle}>
                 Add a note about this sale
               </Text>
@@ -480,8 +510,8 @@ export default function AddCreditScreen() {
             />
 
             <Text style={styles.saveHintText}>
-              This credit sale will be added to the debtor's
-              outstanding balance.
+              This credit sale will be added to the debtor's outstanding
+              balance.
             </Text>
           </View>
 
@@ -495,15 +525,6 @@ export default function AddCreditScreen() {
 
       <BottomNav activeTab="debtors" />
     </SafeAreaView>
-  );
-}
-
-function Field({ label, children }) {
-  return (
-    <View style={{ gap: 6 }}>
-      <Text style={styles.label}>{label}</Text>
-      {children}
-    </View>
   );
 }
 
@@ -534,10 +555,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     shadowColor: colors.navy,
-    shadowOffset: {
-      width: 0,
-      height: 3,
-    },
+    shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.06,
     shadowRadius: 8,
     elevation: 2,
@@ -571,8 +589,7 @@ const styles = StyleSheet.create({
   form: {
     paddingHorizontal: spacing.md,
     paddingTop: 6,
-    paddingBottom:
-      bottomNavHeight + spacing.xl + 20,
+    paddingBottom: bottomNavHeight + spacing.xl + 20,
     gap: 14,
   },
 
@@ -585,10 +602,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     overflow: "hidden",
     shadowColor: colors.navy,
-    shadowOffset: {
-      width: 0,
-      height: 7,
-    },
+    shadowOffset: { width: 0, height: 7 },
     shadowOpacity: 0.16,
     shadowRadius: 14,
     elevation: 5,
@@ -631,10 +645,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     shadowColor: colors.navy,
-    shadowOffset: {
-      width: 0,
-      height: 3,
-    },
+    shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.045,
     shadowRadius: 8,
     elevation: 2,
@@ -680,138 +691,54 @@ const styles = StyleSheet.create({
     marginBottom: 7,
   },
 
-  /* PRODUCT PICKER */
-  productPicker: {
-    minHeight: 62,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#FAFAF8",
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 15,
-    paddingHorizontal: 12,
-  },
-
-  productPickerOpen: {
-    borderColor: colors.goldDark,
-  },
-
-  productPickerLeft: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    marginRight: 10,
-  },
-
-  productPickerIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: colors.cream,
+  /* PRODUCTS */
+  productCount: {
+    minWidth: 32,
+    height: 28,
+    paddingHorizontal: 10,
+    borderRadius: radius.full,
+    backgroundColor: colors.navy,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 10,
   },
 
-  productPickerIconSelected: {
-    backgroundColor: "#F5E8BD",
-  },
-
-  productPickerTextWrap: {
-    flex: 1,
-  },
-
-  productText: {
-    fontSize: 14,
-    color: colors.text,
-    fontWeight: "700",
-  },
-
-  productPlaceholder: {
-    fontSize: 14,
-    color: colors.textMuted,
-    fontWeight: "500",
-  },
-
-  productUnitPrice: {
-    fontSize: 11,
-    color: colors.textMuted,
-    marginTop: 3,
-  },
-
-  /* DROPDOWN */
-  dropdown: {
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 15,
-    marginTop: 8,
-    overflow: "hidden",
-  },
-
-  productList: {
-    maxHeight: 230,
-  },
-
-  dropdownRow: {
-    minHeight: 66,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-
-  dropdownRowSelected: {
-    backgroundColor: "#FAF7EC",
-  },
-
-  dropdownLeft: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    marginRight: 10,
-  },
-
-  dropdownIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 11,
-    backgroundColor: colors.cream,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 10,
-  },
-
-  dropdownNameWrap: {
-    flex: 1,
-  },
-
-  dropdownName: {
-    fontSize: 13.5,
-    color: colors.text,
-    fontWeight: "700",
-  },
-
-  dropdownSmall: {
+  productCountText: {
+    color: colors.white,
     fontSize: 10.5,
-    color: colors.textMuted,
-    marginTop: 3,
+    fontWeight: "900",
   },
 
-  priceBadge: {
-    backgroundColor: "#F5F1E3",
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-    borderRadius: 9,
+  searchWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FAFAF8",
+    minHeight: 50,
+    paddingHorizontal: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 12,
   },
 
-  dropdownPrice: {
-    fontSize: 12,
-    color: colors.navy,
-    fontWeight: "800",
+  searchIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.cream,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 8,
+  },
+
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: colors.text,
+    paddingVertical: 8,
+  },
+
+  productScroll: {
+    maxHeight: 380,
   },
 
   emptyProductsWrap: {
@@ -836,45 +763,173 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 
-  clearRow: {
-    height: 48,
+  /* PRODUCT ROW */
+  row: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 7,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: "#FFF9F9",
+    gap: 11,
+    backgroundColor: colors.white,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 12,
+    marginBottom: spacing.sm,
   },
 
-  clearText: {
-    color: colors.danger,
-    fontSize: 12.5,
+  rowSelected: {
+    borderColor: colors.gold,
+    backgroundColor: "#FFFDF7",
+  },
+
+  productIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: colors.cream,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  productIconSelected: {
+    backgroundColor: colors.navy,
+  },
+
+  productIconDisabled: {
+    backgroundColor: "#EEEEEE",
+  },
+
+  productCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  productName: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: colors.text,
+  },
+
+  productNameDisabled: {
+    color: colors.textMuted,
+  },
+
+  productDetails: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 6,
+  },
+
+  productPrice: {
+    fontSize: 12,
+    color: colors.navy,
+    fontWeight: "800",
+  },
+
+  dot: {
+    width: 3,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: colors.textMuted,
+    marginHorizontal: 7,
+  },
+
+  stockBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: radius.full,
+  },
+
+  stockBadgeGood: { backgroundColor: "rgba(46, 125, 50, 0.09)" },
+  stockBadgeLow: { backgroundColor: "rgba(217, 169, 40, 0.13)" },
+  stockBadgeEmpty: { backgroundColor: "rgba(100, 100, 100, 0.08)" },
+
+  stockDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    marginRight: 4,
+  },
+
+  stockDotGood: { backgroundColor: "#2E7D32" },
+  stockDotLow: { backgroundColor: colors.gold },
+  stockDotEmpty: { backgroundColor: colors.textMuted },
+
+  stockText: {
+    fontSize: 9,
     fontWeight: "700",
   },
 
-  /* INPUT */
-  inputWrapper: {
-    minHeight: 52,
+  stockTextGood: { color: "#2E7D32" },
+  stockTextLow: { color: colors.navy },
+  stockTextEmpty: { color: colors.textMuted },
+
+  addButton: {
+    minWidth: 72,
+    height: 38,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#FAFAF8",
+    justifyContent: "center",
+    gap: 4,
+    borderRadius: radius.full,
+    backgroundColor: colors.navy,
+    paddingHorizontal: 13,
+  },
+
+  addButtonDisabled: {
+    backgroundColor: colors.textMuted,
+  },
+
+  addButtonPressed: {
+    opacity: 0.8,
+    transform: [{ scale: 0.96 }],
+  },
+
+  addButtonText: {
+    color: colors.white,
+    fontWeight: "800",
+    fontSize: 11,
+  },
+
+  qtyControl: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.cream,
+    borderRadius: radius.full,
+    padding: 3,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 14,
   },
 
-  inputIcon: {
-    marginLeft: 14,
+  qtyButton: {
+    width: 31,
+    height: 31,
+    borderRadius: 16,
+    backgroundColor: colors.white,
+    alignItems: "center",
+    justifyContent: "center",
   },
 
-  inputWithIcon: {
-    flex: 1,
-    paddingHorizontal: 11,
-    paddingVertical: 13,
-    fontSize: 15,
-    color: colors.text,
-    fontWeight: "600",
+  qtyButtonPressed: {
+    backgroundColor: "#F1EFE7",
+    transform: [{ scale: 0.92 }],
+  },
+
+  qtyButtonDisabled: {
+    opacity: 0.4,
+  },
+
+  qtyNumberBox: {
+    minWidth: 30,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  qtyText: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: colors.navy,
   },
 
   /* AMOUNT CARD */
@@ -883,10 +938,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     padding: 18,
     shadowColor: colors.navy,
-    shadowOffset: {
-      width: 0,
-      height: 6,
-    },
+    shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.16,
     shadowRadius: 13,
     elevation: 5,
@@ -1013,9 +1065,4 @@ const styles = StyleSheet.create({
     opacity: 0.72,
     transform: [{ scale: 0.97 }],
   },
-
-  pressedLight: {
-    opacity: 0.72,
-  },
 });
-
