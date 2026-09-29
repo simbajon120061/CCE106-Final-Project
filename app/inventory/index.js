@@ -8,7 +8,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useState, useCallback, useMemo } from "react";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -29,11 +29,16 @@ import { useAuth } from "@/context/AuthContext";
 export default function InventoryScreen() {
   const db = useSQLiteContext();
   const router = useRouter();
+  const { filter } = useLocalSearchParams();
   const { user } = useAuth();
 
   const [products, setProducts] = useState([]);
   const [query, setQuery] = useState("");
   const [stockFilter, setStockFilter] = useState("all");
+  const requestedFilter = Array.isArray(filter) ? filter[0] : filter;
+  const activeStockFilter = ["low", "out"].includes(requestedFilter)
+    ? requestedFilter
+    : stockFilter;
 
   const load = useCallback(
     async (q) => {
@@ -48,8 +53,8 @@ export default function InventoryScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      load(query);
-    }, [load, query])
+      load(["low", "out"].includes(requestedFilter) ? "" : query);
+    }, [load, query, requestedFilter])
   );
 
   const filteredProducts = useMemo(() => {
@@ -60,21 +65,28 @@ export default function InventoryScreen() {
       const threshold =
         Number(product.low_stock_threshold) || 0;
 
-      if (stockFilter === "available") {
+      if (activeStockFilter === "available") {
         return stock > threshold;
       }
 
-      if (stockFilter === "low") {
+      if (activeStockFilter === "low") {
         return stock > 0 && stock <= threshold;
       }
 
-      if (stockFilter === "out") {
+      if (activeStockFilter === "out") {
         return stock <= 0;
       }
 
       return true;
     });
-  }, [products, stockFilter]);
+  }, [products, activeStockFilter]);
+
+  function handleStockFilterChange(nextFilter) {
+    setStockFilter(nextFilter);
+    if (requestedFilter) {
+      router.setParams({ filter: undefined });
+    }
+  }
 
   return (
     <SafeAreaView
@@ -163,9 +175,9 @@ export default function InventoryScreen() {
           <FilterChip
             icon="apps-outline"
             label="All"
-            active={stockFilter === "all"}
+            active={activeStockFilter === "all"}
             onPress={() =>
-              setStockFilter("all")
+              handleStockFilterChange("all")
             }
           />
 
@@ -173,28 +185,28 @@ export default function InventoryScreen() {
             icon="checkmark-circle-outline"
             label="Available"
             active={
-              stockFilter === "available"
+              activeStockFilter === "available"
             }
             onPress={() =>
-              setStockFilter("available")
+              handleStockFilterChange("available")
             }
           />
 
           <FilterChip
             icon="warning-outline"
             label="Low"
-            active={stockFilter === "low"}
+            active={activeStockFilter === "low"}
             onPress={() =>
-              setStockFilter("low")
+              handleStockFilterChange("low")
             }
           />
 
           <FilterChip
             icon="close-circle-outline"
             label="Out"
-            active={stockFilter === "out"}
+            active={activeStockFilter === "out"}
             onPress={() =>
-              setStockFilter("out")
+              handleStockFilterChange("out")
             }
           />
         </View>

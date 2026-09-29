@@ -51,7 +51,7 @@ export default function DashboardScreen() {
     outstanding: 0,
     itemsSold: 0,
     lowStockCount: 0,
-    lowStockProductId: null,
+    outOfStockCount: 0,
   });
 
   useFocusEffect(
@@ -81,6 +81,12 @@ export default function DashboardScreen() {
           0;
 
         const cashSales = todaySummary?.cash_total ?? 0;
+        const outOfStock = lowStock.filter(
+          (product) => Number(product.stock_quantity) <= 0
+        );
+        const lowStockOnly = lowStock.filter(
+          (product) => Number(product.stock_quantity) > 0
+        );
 
         setStats({
           todaySales: cashSales + utangSales,
@@ -89,8 +95,8 @@ export default function DashboardScreen() {
           outstanding,
           itemsSold:
             todaySummary?.item_count ?? itemRow ?? 0,
-          lowStockCount: lowStock.length,
-          lowStockProductId: lowStock[0]?.id ?? null,
+          lowStockCount: lowStockOnly.length,
+          outOfStockCount: outOfStock.length,
         });
       }
 
@@ -164,9 +170,10 @@ export default function DashboardScreen() {
               pressed && styles.alertPressed,
             ]}
             onPress={() =>
-              router.push(
-                `/inventory/${stats.lowStockProductId}`
-              )
+              router.push({
+                pathname: "/inventory",
+                params: { filter: "low" },
+              })
             }
           >
             <View style={styles.alertIconContainer}>
@@ -183,6 +190,46 @@ export default function DashboardScreen() {
               <Text style={styles.alertText}>
                 {stats.lowStockCount} product
                 {stats.lowStockCount === 1 ? "" : "s"} low on stock
+              </Text>
+            </View>
+
+            <View style={styles.alertArrow}>
+              <Ionicons
+                name="chevron-forward"
+                size={19}
+                color={colors.danger}
+              />
+            </View>
+          </Pressable>
+        )}
+
+        {stats.outOfStockCount > 0 && (
+          <Pressable
+            style={({ pressed }) => [
+              styles.alertBanner,
+              pressed && styles.alertPressed,
+            ]}
+            onPress={() =>
+              router.push({
+                pathname: "/inventory",
+                params: { filter: "out" },
+              })
+            }
+          >
+            <View style={styles.alertIconContainer}>
+              <Ionicons
+                name="close-circle"
+                size={22}
+                color={colors.danger}
+              />
+            </View>
+
+            <View style={styles.alertContent}>
+              <Text style={styles.alertTitle}>Out of Stock Alert</Text>
+
+              <Text style={styles.alertText}>
+                {stats.outOfStockCount} product
+                {stats.outOfStockCount === 1 ? "" : "s"} need restocking
               </Text>
             </View>
 
