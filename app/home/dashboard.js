@@ -119,7 +119,10 @@ export default function DashboardScreen() {
         </View>
 
         {stats.lowStockCount > 0 && (
-          <Pressable style={styles.alertBanner} onPress={() => router.push("/reports")}>
+          <Pressable
+            style={styles.alertBanner}
+            onPress={() => router.push({ pathname: "/inventory", params: { filter: "low" } })}
+          >
             <Ionicons name="warning" size={22} color={colors.danger} />
             <Text style={styles.alertText}>
               {stats.lowStockCount} product{stats.lowStockCount === 1 ? "" : "s"} low on

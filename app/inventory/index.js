@@ -1,7 +1,7 @@
 import { View, Text, StyleSheet, FlatList, Pressable, TextInput } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useState, useCallback, useMemo } from "react";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useState, useCallback, useMemo, useEffect } from "react";
+import { useFocusEffect, useRouter, useLocalSearchParams } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
 import EmptyState from "@/components/EmptyState";
@@ -16,7 +16,12 @@ export default function InventoryScreen() {
   const router = useRouter();
   const [products, setProducts] = useState([]);
   const [query, setQuery] = useState("");
-  const [stockFilter, setStockFilter] = useState("all");
+  const { filter } = useLocalSearchParams();
+  const [stockFilter, setStockFilter] = useState(filter === "low" ? "low" : "all");
+
+  useEffect(() => {
+    if (filter === "low") setStockFilter("low");
+  }, [filter]);
 
   const load = useCallback(
     async (q) => {
@@ -105,7 +110,8 @@ export default function InventoryScreen() {
           />
         }
         renderItem={({ item }) => {
-          const low = item.stock_quantity <= item.low_stock_threshold;
+            const out = Number(item.stock_quantity) <= 0;
+            const low = !out && item.stock_quantity <= item.low_stock_threshold;
           return (
             <Pressable
               style={styles.card}
@@ -121,12 +127,12 @@ export default function InventoryScreen() {
               <Text style={styles.price}>{formatCurrency(item.unit_price)}</Text>
 
               <View style={styles.stockWrap}>
-                {low && (
+                {(low || out) && (
                   <View style={styles.lowBadge}>
-                    <Text style={styles.lowBadgeText}>LOW</Text>
+                    <Text style={styles.lowBadgeText}>{out ? "OUT" : "LOW"}</Text>
                   </View>
                 )}
-                <Text style={[styles.stock, low && { color: colors.danger }]}>
+                <Text style={[styles.stock, (low || out) && { color: colors.danger }]}>
                   {item.stock_quantity} in stock
                 </Text>
               </View>
@@ -229,9 +235,9 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   lowBadgeText: { color: colors.white, fontSize: 10, fontWeight: "800" },
-  productName: { fontSize: 14, fontWeight: "700", color: colors.text, paddingRight: 30 },
+  productName: { fontSize: 14, fontWeight: "700", color: colors.text},
   category: { fontSize: 11, color: colors.textMuted },
-  price: { fontSize: 16, fontWeight: "800", color: colors.navy, marginTop: 4 },
+  price: { fontSize: 16, fontWeight: "800", color: colors.navy},
   stock: { fontSize: 12, color: colors.textMuted },
   info: { flex: 1, gap: 2 },
   stockWrap: { alignItems: "flex-end", gap: 4, marginLeft: 16 },
