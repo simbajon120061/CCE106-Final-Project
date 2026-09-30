@@ -271,6 +271,7 @@ export default function AddCreditScreen() {
                     ? styles.stockTextLow
                     : styles.stockTextGood,
                 ]}
+                numberOfLines={1}
               >
                 {outOfStock
                   ? "No stock"
@@ -849,6 +850,7 @@ const styles = StyleSheet.create({
   productCol: {
     flex: 1,
     minWidth: 0,
+    marginRight: 8,
   },
 
   productName: {
@@ -862,9 +864,10 @@ const styles = StyleSheet.create({
   },
 
   productDetails: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: "column",
+    alignItems: "flex-start",
     marginTop: 6,
+    gap: 4,
   },
 
   productPrice: {
@@ -874,11 +877,7 @@ const styles = StyleSheet.create({
   },
 
   dot: {
-    width: 3,
-    height: 3,
-    borderRadius: 2,
-    backgroundColor: colors.textMuted,
-    marginHorizontal: 7,
+    display: "none",
   },
 
   stockBadge: {
@@ -887,6 +886,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 3,
     borderRadius: radius.full,
+    flexShrink: 0,
   },
 
   stockBadgeGood: { backgroundColor: "rgba(46, 125, 50, 0.09)" },
@@ -907,6 +907,7 @@ const styles = StyleSheet.create({
   stockText: {
     fontSize: 9,
     fontWeight: "700",
+    flexShrink: 0,
   },
 
   stockTextGood: { color: "#2E7D32" },
@@ -940,45 +941,52 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
 
-  qtyControl: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: colors.cream,
-    borderRadius: radius.full,
-    padding: 3,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
+  /* QUANTITY */
+qtyControl: {
+  width: 86,
+  height: 38,
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+  backgroundColor: colors.cream,
+  borderRadius: radius.full,
+  paddingHorizontal: 3,
+  borderWidth: 1,
+  borderColor: colors.border,
+  flexShrink: 0,
+},
 
-  qtyButton: {
-    width: 31,
-    height: 31,
-    borderRadius: 16,
-    backgroundColor: colors.white,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+qtyButton: {
+  width: 30,
+  height: 30,
+  borderRadius: 15,
+  backgroundColor: colors.white,
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+},
 
-  qtyButtonPressed: {
-    backgroundColor: "#F1EFE7",
-    transform: [{ scale: 0.92 }],
-  },
+qtyButtonPressed: {
+  backgroundColor: "#F1EFE7",
+  transform: [{ scale: 0.92 }],
+},
 
-  qtyButtonDisabled: {
-    opacity: 0.4,
-  },
+qtyButtonDisabled: {
+  opacity: 0.4,
+},
 
-  qtyNumberBox: {
-    minWidth: 30,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+qtyNumberBox: {
+  width: 20,
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+},
 
-  qtyText: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: colors.navy,
-  },
+qtyText: {
+  fontSize: 14,
+  fontWeight: "900",
+  color: colors.navy,
+},
 
   /* AMOUNT CARD */
   amountCard: {

@@ -704,45 +704,51 @@ const styles = StyleSheet.create({
   },
 
   /* QUANTITY */
-  qtyControl: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: colors.cream,
-    borderRadius: radius.full,
-    padding: 3,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
+qtyControl: {
+  width: 86,
+  height: 38,
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+  backgroundColor: colors.cream,
+  borderRadius: radius.full,
+  paddingHorizontal: 3,
+  borderWidth: 1,
+  borderColor: colors.border,
+  flexShrink: 0,
+},
 
-  qtyButton: {
-    width: 31,
-    height: 31,
-    borderRadius: 16,
-    backgroundColor: colors.white,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+qtyButton: {
+  width: 30,
+  height: 30,
+  borderRadius: 15,
+  backgroundColor: colors.white,
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+},
 
-  qtyButtonPressed: {
-    backgroundColor: "#F1EFE7",
-    transform: [{ scale: 0.92 }],
-  },
+qtyButtonPressed: {
+  backgroundColor: "#F1EFE7",
+  transform: [{ scale: 0.92 }],
+},
 
-  qtyButtonDisabled: {
-    opacity: 0.4,
-  },
+qtyButtonDisabled: {
+  opacity: 0.4,
+},
 
-  qtyNumberBox: {
-    minWidth: 30,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+qtyNumberBox: {
+  width: 20,
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+},
 
-  qtyText: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: colors.navy,
-  },
+qtyText: {
+  fontSize: 14,
+  fontWeight: "900",
+  color: colors.navy,
+},
 
   /* CART BAR */
   cartBar: {
