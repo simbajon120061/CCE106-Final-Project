@@ -50,35 +50,72 @@ export default function ReportsScreen() {
   const { user } = useAuth();
 
   const [tab, setTab] = useState("sales");
+
+  // SALES FILTER
+  const [salesPeriod, setSalesPeriod] = useState("daily");
+
   const [summary, setSummary] = useState([]);
   const [unpaid, setUnpaid] = useState([]);
   const [lowStock, setLowStock] = useState([]);
   const [history, setHistory] = useState([]);
+
   const [historyTypeFilter, setHistoryTypeFilter] =
     useState("all");
+
   const [historyDateFilter, setHistoryDateFilter] =
     useState("all");
+
   const [backupLoading, setBackupLoading] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
 
+  /*
+   * LOAD REPORT DATA
+   *
+   * 31 days are loaded so the Monthly filter
+   * can display the last 30 days.
+   */
   useFocusEffect(
     useCallback(() => {
       let active = true;
 
       async function load() {
-        const [s, u, l, h] = await Promise.all([
-          getDailySalesSummary(db, user?.id, 14),
-          getUnpaidBalances(db, user?.id),
-          getLowStockProducts(db, user?.id),
-          getTransactionHistory(db, user?.id, 30),
-        ]);
+        try {
+          const [s, u, l, h] = await Promise.all([
+            getDailySalesSummary(
+              db,
+              user?.id,
+              31
+            ),
 
-        if (!active) return;
+            getUnpaidBalances(
+              db,
+              user?.id
+            ),
 
-        setSummary(s);
-        setUnpaid(u);
-        setLowStock(l);
-        setHistory(h);
+            getLowStockProducts(
+              db,
+              user?.id
+            ),
+
+            getTransactionHistory(
+              db,
+              user?.id,
+              30
+            ),
+          ]);
+
+          if (!active) return;
+
+          setSummary(s || []);
+          setUnpaid(u || []);
+          setLowStock(l || []);
+          setHistory(h || []);
+        } catch (error) {
+          console.error(
+            "Failed to load reports:",
+            error
+          );
+        }
       }
 
       load();
@@ -89,62 +126,203 @@ export default function ReportsScreen() {
     }, [db, user?.id])
   );
 
+  /*
+   * TOTAL UNPAID
+   */
   const totalUnpaid = unpaid.reduce(
-    (sum, d) => sum + d.balance,
+    (sum, d) =>
+      sum + Number(d.balance || 0),
     0
   );
 
+  /*
+   * SALES PERIOD CONFIGURATION
+   *
+   * Daily   = 1 day
+   * Weekly  = last 7 days
+   * Monthly = last 30 days
+   */
+  const salesPeriodConfig = {
+    daily: {
+      label: "Today",
+      subtitle: "Sales recorded today",
+      days: 1,
+    },
+
+    weekly: {
+      label: "Last 7 days",
+      subtitle:
+        "Sales recorded over the last 7 days",
+      days: 7,
+    },
+
+    monthly: {
+      label: "Last 30 days",
+      subtitle:
+        "Sales recorded over the last 30 days",
+      days: 30,
+    },
+  };
+
+  const selectedSalesConfig =
+    salesPeriodConfig[salesPeriod] ||
+    salesPeriodConfig.daily;
+
+  /*
+   * GET ROWS FOR SELECTED SALES PERIOD
+   */
+  const salesPeriodRows = useMemo(() => {
+    return summary.slice(
+      0,
+      selectedSalesConfig.days
+    );
+  }, [
+    summary,
+    selectedSalesConfig.days,
+  ]);
+
+  /*
+   * CALCULATE TOTALS FOR SELECTED PERIOD
+   */
+  const salesPeriodTotals = useMemo(() => {
+    return salesPeriodRows.reduce(
+      (totals, row) => {
+        const cash = Number(
+          row.cash_total || 0
+        );
+
+        const credit = Number(
+          row.credit_total ??
+            row.total_credit_sales ??
+            0
+        );
+
+        const items = Number(
+          row.item_count || 0
+        );
+
+        totals.cash += cash;
+        totals.credit += credit;
+        totals.items += items;
+
+        return totals;
+      },
+      {
+        cash: 0,
+        credit: 0,
+        items: 0,
+      }
+    );
+  }, [salesPeriodRows]);
+
+  /*
+   * TODAY VALUES
+   *
+   * These are kept for the PDF/report output.
+   */
   const today = summary[0];
 
-  const todayCash = today?.cash_total || 0;
+  const todayCash = Number(
+    today?.cash_total || 0
+  );
 
-  const todayCredit =
+  const todayCredit = Number(
     today?.credit_total ??
-    today?.total_credit_sales ??
-    0;
+      today?.total_credit_sales ??
+      0
+  );
 
   const todayGrandTotal =
     todayCash + todayCredit;
 
-  const todayItemsSold =
-    today?.item_count || 0;
+  const todayItemsSold = Number(
+    today?.item_count || 0
+  );
 
+  /*
+   * SELECTED FILTER TOTALS
+   */
+  const selectedCash =
+    salesPeriodTotals.cash;
+
+  const selectedCredit =
+    salesPeriodTotals.credit;
+
+  const selectedGrandTotal =
+    selectedCash + selectedCredit;
+
+  const selectedItemsSold =
+    salesPeriodTotals.items;
+
+  /*
+   * HISTORY DATE OPTIONS
+   */
   const historyDates = useMemo(
     () => [
       ...new Set(
-        history.map((entry) => getHistoryDateKey(entry.date))
+        history.map((entry) =>
+          getHistoryDateKey(entry.date)
+        )
       ),
     ],
     [history]
   );
 
+  /*
+   * FILTER HISTORY
+   */
   const filteredHistory = useMemo(
     () =>
       history.filter((entry) => {
         const matchesType =
           historyTypeFilter === "all" ||
           entry.type === historyTypeFilter;
+
         const matchesDate =
           historyDateFilter === "all" ||
-          getHistoryDateKey(entry.date) === historyDateFilter;
+          getHistoryDateKey(entry.date) ===
+            historyDateFilter;
 
-        return matchesType && matchesDate;
+        return (
+          matchesType &&
+          matchesDate
+        );
       }),
-    [history, historyDateFilter, historyTypeFilter]
+    [
+      history,
+      historyDateFilter,
+      historyTypeFilter,
+    ]
   );
 
+  /*
+   * BACKUP
+   */
   async function handleShareBackup() {
     setBackupLoading(true);
 
     try {
-      const data = await exportAllData(db, user?.id);
+      const data =
+        await exportAllData(
+          db,
+          user?.id
+        );
 
       await Share.share({
-        title: "Track and Tally Backup",
-        message: JSON.stringify(data, null, 2),
+        title:
+          "Track and Tally Backup",
+        message:
+          JSON.stringify(
+            data,
+            null,
+            2
+          ),
       });
     } catch (error) {
-      console.error("Failed to export backup:", error);
+      console.error(
+        "Failed to export backup:",
+        error
+      );
 
       Alert.alert(
         "Export failed",
@@ -155,52 +333,79 @@ export default function ReportsScreen() {
     }
   }
 
-  async function printReports(saveAsPdf = false) {
+  /*
+   * PRINT / PDF REPORT
+   */
+  async function printReports(
+    saveAsPdf = false
+  ) {
     setReportLoading(true);
 
     try {
-      const reportHtml = buildReportsHtml({
-        todayCash,
-        todayCredit,
-        todayGrandTotal,
-        todayItemsSold,
-        totalUnpaid,
-        unpaid,
-        lowStock,
-        history,
-      });
+      const reportHtml =
+        buildReportsHtml({
+          todayCash,
+          todayCredit,
+          todayGrandTotal,
+          todayItemsSold,
+          totalUnpaid,
+          unpaid,
+          lowStock,
+          history,
+        });
 
       if (Platform.OS === "web") {
-        openWebPrintDialog(reportHtml);
+        openWebPrintDialog(
+          reportHtml
+        );
         return;
       }
 
       if (!saveAsPdf) {
-        await Print.printAsync({ html: reportHtml });
+        await Print.printAsync({
+          html: reportHtml,
+        });
+
         return;
       }
 
-      const { uri } = await Print.printToFileAsync({ html: reportHtml });
-      const canShare = await Sharing.isAvailableAsync();
+      const { uri } =
+        await Print.printToFileAsync({
+          html: reportHtml,
+        });
+
+      const canShare =
+        await Sharing.isAvailableAsync();
 
       if (!canShare) {
         Alert.alert(
           "PDF created",
           "This device cannot open a save sheet for the PDF."
         );
+
         return;
       }
 
       await Sharing.shareAsync(uri, {
-        dialogTitle: "Save Track and Tally report",
-        mimeType: "application/pdf",
+        dialogTitle:
+          "Save Track and Tally report",
+        mimeType:
+          "application/pdf",
         UTI: ".pdf",
       });
     } catch (error) {
-      console.error("Could not create report PDF:", error);
+      console.error(
+        "Could not create report PDF:",
+        error
+      );
+
       Alert.alert(
-        saveAsPdf ? "Could not save PDF" : "Could not print reports",
-        getExportErrorMessage(error)
+        saveAsPdf
+          ? "Could not save PDF"
+          : "Could not print reports",
+        getExportErrorMessage(
+          error
+        )
       );
     } finally {
       setReportLoading(false);
@@ -224,57 +429,187 @@ export default function ReportsScreen() {
             icon="bar-chart-outline"
             label="Sales"
             active={tab === "sales"}
-            onPress={() => setTab("sales")}
+            onPress={() =>
+              setTab("sales")
+            }
           />
 
           <TabButton
             icon="wallet-outline"
             label="Unpaid"
             active={tab === "unpaid"}
-            onPress={() => setTab("unpaid")}
+            onPress={() =>
+              setTab("unpaid")
+            }
           />
 
           <TabButton
             icon="time-outline"
             label="History"
             active={tab === "history"}
-            onPress={() => setTab("history")}
+            onPress={() =>
+              setTab("history")
+            }
           />
 
           <TabButton
             icon="cloud-outline"
             label="Backup"
             active={tab === "backup"}
-            onPress={() => setTab("backup")}
+            onPress={() =>
+              setTab("backup")
+            }
           />
         </View>
       </View>
 
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.container}
+        contentContainerStyle={
+          styles.container
+        }
       >
+        {/* ================================================== */}
         {/* SALES */}
+        {/* ================================================== */}
+
         {tab === "sales" && (
           <>
             <SectionHeader
               icon="stats-chart-outline"
-              title="Today summary"
-              subtitle="Your sales performance today"
+              title={`${selectedSalesConfig.label} sales`}
+              subtitle={
+                selectedSalesConfig.subtitle
+              }
             />
 
-            <View style={styles.summaryGrid}>
+            {/* SALES PERIOD FILTER */}
+            <Card
+              style={
+                styles.salesPeriodCard
+              }
+            >
+              <View
+                style={
+                  styles.salesPeriodHeader
+                }
+              >
+                <View>
+                  <Text
+                    style={
+                      styles.salesPeriodTitle
+                    }
+                  >
+                    Sales period
+                  </Text>
+
+                  <Text
+                    style={
+                      styles.salesPeriodSubtitle
+                    }
+                  >
+                    Choose how you want to
+                    view sales
+                  </Text>
+                </View>
+
+                <Ionicons
+                  name="calendar-outline"
+                  size={20}
+                  color={colors.navy}
+                />
+              </View>
+
+              <View
+                style={
+                  styles.salesPeriodButtons
+                }
+              >
+                {[
+                  {
+                    label: "Daily",
+                    value: "daily",
+                    icon: "today-outline",
+                  },
+
+                  {
+                    label: "Weekly",
+                    value: "weekly",
+                    icon: "calendar-outline",
+                  },
+
+                  {
+                    label: "Monthly",
+                    value: "monthly",
+                    icon: "calendar-number-outline",
+                  },
+                ].map((option) => (
+                  <Pressable
+                    key={option.value}
+                    style={({
+                      pressed,
+                    }) => [
+                      styles.salesPeriodButton,
+
+                      salesPeriod ===
+                        option.value &&
+                        styles.salesPeriodButtonActive,
+
+                      pressed &&
+                        styles.salesPeriodButtonPressed,
+                    ]}
+                    onPress={() =>
+                      setSalesPeriod(
+                        option.value
+                      )
+                    }
+                  >
+                    <Ionicons
+                      name={option.icon}
+                      size={16}
+                      color={
+                        salesPeriod ===
+                        option.value
+                          ? colors.white
+                          : colors.navy
+                      }
+                    />
+
+                    <Text
+                      style={[
+                        styles.salesPeriodButtonText,
+
+                        salesPeriod ===
+                          option.value &&
+                          styles.salesPeriodButtonTextActive,
+                      ]}
+                    >
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </Card>
+
+            {/* SALES METRICS */}
+            <View
+              style={styles.summaryGrid}
+            >
               <MetricCard
                 icon="cash-outline"
                 label="Cash sales"
-                value={formatCurrency(todayCash)}
+                value={formatCurrency(
+                  selectedCash
+                )}
                 iconBackground="cream"
               />
 
               <MetricCard
                 icon="wallet-outline"
                 label="Utang sales"
-                value={formatCurrency(todayCredit)}
+                value={formatCurrency(
+                  selectedCredit
+                )}
                 danger
                 iconBackground="danger"
               />
@@ -282,7 +617,9 @@ export default function ReportsScreen() {
               <MetricCard
                 icon="trending-up-outline"
                 label="Grand total"
-                value={formatCurrency(todayGrandTotal)}
+                value={formatCurrency(
+                  selectedGrandTotal
+                )}
                 success
                 iconBackground="success"
               />
@@ -290,97 +627,184 @@ export default function ReportsScreen() {
               <MetricCard
                 icon="cube-outline"
                 label="Items sold"
-                value={String(todayItemsSold)}
+                value={String(
+                  selectedItemsSold
+                )}
                 iconBackground="cream"
               />
             </View>
 
+            {/* SALES BREAKDOWN */}
             <SectionHeader
               icon="calendar-outline"
-              title="Last 14 days"
+              title={`${selectedSalesConfig.label} breakdown`}
               subtitle="Daily sales activity"
             />
 
-            {summary.length === 0 ? (
+            {salesPeriodRows.length ===
+            0 ? (
               <EmptyState
                 icon="bar-chart-outline"
                 title="No sales recorded yet"
               />
             ) : (
-              <Card style={styles.listCard}>
-                {summary.map((row, i) => (
-                  <View
-                    key={row.date}
-                    style={[
-                      styles.dayRow,
-                      i !== summary.length - 1 &&
-                        styles.rowBorder,
-                    ]}
-                  >
-                    <View style={styles.dateIcon}>
-                      <Ionicons
-                        name="calendar-outline"
-                        size={17}
-                        color={colors.navy}
-                      />
-                    </View>
+              <Card
+                style={styles.listCard}
+              >
+                {salesPeriodRows.map(
+                  (row, i) => {
+                    const cash =
+                      Number(
+                        row.cash_total ||
+                          0
+                      );
 
-                    <View style={styles.rowMain}>
-                      <Text style={styles.dayDate}>
-                        {formatDate(row.date)}
-                      </Text>
+                    const credit =
+                      Number(
+                        row.credit_total ??
+                          row.total_credit_sales ??
+                          0
+                      );
 
-                      <Text style={styles.rowSubtext}>
-                        Daily sales
-                      </Text>
-                    </View>
+                    const total =
+                      cash + credit;
 
-                    <View style={styles.rowAmounts}>
-                      <View style={styles.amountLine}>
+                    const items =
+                      Number(
+                        row.item_count ||
+                          0
+                      );
+
+                    return (
+                      <View
+                        key={`${row.date}-${i}`}
+                        style={[
+                          styles.dayRow,
+
+                          i !==
+                            salesPeriodRows.length -
+                              1 &&
+                            styles.rowBorder,
+                        ]}
+                      >
                         <View
-                          style={[
-                            styles.amountDot,
-                            styles.cashDot,
-                          ]}
-                        />
-
-                        <Text
-                          style={styles.dayCredit}
+                          style={
+                            styles.dateIcon
+                          }
                         >
-                          +{formatCurrency(
-                            row.cash_total || 0
-                          )}{" "}
-                          cash
-                        </Text>
-                      </View>
+                          <Ionicons
+                            name="calendar-outline"
+                            size={17}
+                            color={
+                              colors.navy
+                            }
+                          />
+                        </View>
 
-                      <View style={styles.amountLine}>
                         <View
-                          style={[
-                            styles.amountDot,
-                            styles.creditDot,
-                          ]}
-                        />
-
-                        <Text
-                          style={styles.dayPayment}
+                          style={
+                            styles.rowMain
+                          }
                         >
-                          +{formatCurrency(
-                            row.credit_total ??
-                              row.total_credit_sales
-                          )}{" "}
-                          utang
-                        </Text>
+                          <Text
+                            style={
+                              styles.dayDate
+                            }
+                          >
+                            {formatDate(
+                              row.date
+                            )}
+                          </Text>
+
+                          <Text
+                            style={
+                              styles.rowSubtext
+                            }
+                          >
+                            {items}{" "}
+                            {items === 1
+                              ? "item"
+                              : "items"}{" "}
+                            sold
+                          </Text>
+                        </View>
+
+                        <View
+                          style={
+                            styles.rowAmounts
+                          }
+                        >
+                          <Text
+                            style={
+                              styles.salesRowTotal
+                            }
+                          >
+                            {formatCurrency(
+                              total
+                            )}
+                          </Text>
+
+                          <View
+                            style={
+                              styles.amountLine
+                            }
+                          >
+                            <View
+                              style={[
+                                styles.amountDot,
+                                styles.cashDot,
+                              ]}
+                            />
+
+                            <Text
+                              style={
+                                styles.dayCredit
+                              }
+                            >
+                              {formatCurrency(
+                                cash
+                              )}{" "}
+                              cash
+                            </Text>
+                          </View>
+
+                          <View
+                            style={
+                              styles.amountLine
+                            }
+                          >
+                            <View
+                              style={[
+                                styles.amountDot,
+                                styles.creditDot,
+                              ]}
+                            />
+
+                            <Text
+                              style={
+                                styles.dayPayment
+                              }
+                            >
+                              {formatCurrency(
+                                credit
+                              )}{" "}
+                              utang
+                            </Text>
+                          </View>
+                        </View>
                       </View>
-                    </View>
-                  </View>
-                ))}
+                    );
+                  }
+                )}
               </Card>
             )}
           </>
         )}
 
+        {/* ================================================== */}
         {/* UNPAID */}
+        {/* ================================================== */}
+
         {tab === "unpaid" && (
           <>
             <SectionHeader
@@ -389,25 +813,53 @@ export default function ReportsScreen() {
               subtitle="Customers with outstanding balances"
             />
 
-            <View style={styles.outstandingCard}>
-              <View style={styles.outstandingIcon}>
+            <View
+              style={
+                styles.outstandingCard
+              }
+            >
+              <View
+                style={
+                  styles.outstandingIcon
+                }
+              >
                 <Ionicons
                   name="alert-circle-outline"
                   size={24}
-                  color={colors.goldLight}
+                  color={
+                    colors.goldLight
+                  }
                 />
               </View>
 
-              <View style={styles.outstandingInfo}>
-                <Text style={styles.totalLabel}>
+              <View
+                style={
+                  styles.outstandingInfo
+                }
+              >
+                <Text
+                  style={
+                    styles.totalLabel
+                  }
+                >
                   Total outstanding
                 </Text>
 
-                <Text style={styles.totalValue}>
-                  {formatCurrency(totalUnpaid)}
+                <Text
+                  style={
+                    styles.totalValue
+                  }
+                >
+                  {formatCurrency(
+                    totalUnpaid
+                  )}
                 </Text>
 
-                <Text style={styles.outstandingHint}>
+                <Text
+                  style={
+                    styles.outstandingHint
+                  }
+                >
                   {unpaid.length === 1
                     ? "1 debtor with balance"
                     : `${unpaid.length} debtors with balances`}
@@ -421,14 +873,21 @@ export default function ReportsScreen() {
                 title="Everyone is settled up"
               />
             ) : (
-              <Card style={styles.listCard}>
+              <Card
+                style={styles.listCard}
+              >
                 {unpaid.map((d, i) => (
                   <Pressable
                     key={d.id}
-                    style={({ pressed }) => [
+                    style={({
+                      pressed,
+                    }) => [
                       styles.dayRow,
-                      i !== unpaid.length - 1 &&
+
+                      i !==
+                        unpaid.length - 1 &&
                         styles.rowBorder,
+
                       pressed &&
                         styles.rowPressed,
                     ]}
@@ -438,36 +897,64 @@ export default function ReportsScreen() {
                       )
                     }
                   >
-                    <View style={styles.personIcon}>
+                    <View
+                      style={
+                        styles.personIcon
+                      }
+                    >
                       <Ionicons
                         name="person-outline"
                         size={17}
-                        color={colors.navy}
+                        color={
+                          colors.navy
+                        }
                       />
                     </View>
 
-                    <View style={styles.rowMain}>
+                    <View
+                      style={
+                        styles.rowMain
+                      }
+                    >
                       <Text
-                        style={styles.dayDate}
+                        style={
+                          styles.dayDate
+                        }
                         numberOfLines={1}
                       >
                         {d.full_name}
                       </Text>
 
-                      <Text style={styles.rowSubtext}>
+                      <Text
+                        style={
+                          styles.rowSubtext
+                        }
+                      >
                         Outstanding balance
                       </Text>
                     </View>
 
-                    <View style={styles.balanceRight}>
-                      <Text style={styles.balanceAmount}>
-                        {formatCurrency(d.balance)}
+                    <View
+                      style={
+                        styles.balanceRight
+                      }
+                    >
+                      <Text
+                        style={
+                          styles.balanceAmount
+                        }
+                      >
+                        {formatCurrency(
+                          d.balance
+                        )}
                       </Text>
 
                       <Ionicons
                         name="chevron-forward"
                         size={16}
-                        color={colors.textMuted}
+                        color={
+                          colors.textMuted
+                        }
                       />
                     </View>
                   </Pressable>
@@ -477,7 +964,10 @@ export default function ReportsScreen() {
           </>
         )}
 
+        {/* ================================================== */}
         {/* HISTORY */}
+        {/* ================================================== */}
+
         {tab === "history" && (
           <>
             <SectionHeader
@@ -486,31 +976,74 @@ export default function ReportsScreen() {
               subtitle="Filter your latest transactions"
             />
 
-            <Card style={styles.historyFiltersCard}>
-              <Text style={styles.filterLabel}>Transaction type</Text>
+            <Card
+              style={
+                styles.historyFiltersCard
+              }
+            >
+              <Text
+                style={styles.filterLabel}
+              >
+                Transaction type
+              </Text>
+
               <HistoryFilterDropdown
                 title="Transaction type"
-                value={historyTypeFilter}
+                value={
+                  historyTypeFilter
+                }
                 options={[
-                  { label: "All transactions", value: "all" },
-                  { label: "Payments", value: "payment" },
-                  { label: "Utang", value: "credit" },
+                  {
+                    label:
+                      "All transactions",
+                    value: "all",
+                  },
+
+                  {
+                    label: "Payments",
+                    value: "payment",
+                  },
+
+                  {
+                    label: "Utang",
+                    value: "credit",
+                  },
                 ]}
-                onChange={setHistoryTypeFilter}
+                onChange={
+                  setHistoryTypeFilter
+                }
               />
 
-              <Text style={styles.filterLabel}>Date</Text>
+              <Text
+                style={styles.filterLabel}
+              >
+                Date
+              </Text>
+
               <HistoryFilterDropdown
                 title="Date"
-                value={historyDateFilter}
+                value={
+                  historyDateFilter
+                }
                 options={[
-                  { label: "All dates", value: "all" },
-                  ...historyDates.map((date) => ({
-                    label: formatDate(date),
-                    value: date,
-                  })),
+                  {
+                    label: "All dates",
+                    value: "all",
+                  },
+
+                  ...historyDates.map(
+                    (date) => ({
+                      label:
+                        formatDate(
+                          date
+                        ),
+                      value: date,
+                    })
+                  ),
                 ]}
-                onChange={setHistoryDateFilter}
+                onChange={
+                  setHistoryDateFilter
+                }
               />
             </Card>
 
@@ -519,98 +1052,136 @@ export default function ReportsScreen() {
                 icon="time-outline"
                 title="No activity recorded yet"
               />
-            ) : filteredHistory.length === 0 ? (
+            ) : filteredHistory.length ===
+              0 ? (
               <EmptyState
                 icon="funnel-outline"
                 title="No matching transactions"
                 subtitle="Try a different transaction type or date."
               />
             ) : (
-              <Card style={styles.listCard}>
-                {filteredHistory.map((entry, i) => (
-                  <View
-                    key={entry.id}
-                    style={[
-                      styles.dayRow,
-                      i !== filteredHistory.length - 1 &&
-                        styles.rowBorder,
-                    ]}
-                  >
+              <Card
+                style={styles.listCard}
+              >
+                {filteredHistory.map(
+                  (entry, i) => (
                     <View
+                      key={entry.id}
                       style={[
-                        styles.historyIcon,
-                        entry.type === "payment"
-                          ? styles.historyPaymentIcon
-                          : styles.historySaleIcon,
+                        styles.dayRow,
+
+                        i !==
+                          filteredHistory.length -
+                            1 &&
+                          styles.rowBorder,
                       ]}
                     >
-                      <Ionicons
-                        name={
-                          entry.type === "payment"
-                            ? "arrow-down-outline"
-                            : "cart-outline"
-                        }
-                        size={17}
-                        color={
-                          entry.type === "payment"
-                            ? colors.success
-                            : colors.navy
-                        }
-                      />
-                    </View>
-
-                    <View style={styles.rowMain}>
-                      <Text
-                        style={styles.dayDate}
-                        numberOfLines={1}
-                      >
-                        {entry.label}
-                      </Text>
-
-                      <Text
-                        style={styles.metaText}
-                        numberOfLines={1}
-                      >
-                        {entry.debtor_name
-                          ? `${entry.debtor_name} - `
-                          : ""}
-                        {formatDate(entry.date)}
-                      </Text>
-                    </View>
-
-                    <View style={styles.historyAmountBox}>
-                      <Text
+                      <View
                         style={[
-                          styles.historyAmount,
+                          styles.historyIcon,
+
                           entry.type ===
-                            "payment" &&
-                            styles.paymentAmount,
+                            "payment"
+                            ? styles.historyPaymentIcon
+                            : styles.historySaleIcon,
                         ]}
                       >
-                        {entry.type === "payment"
-                          ? "-"
-                          : "+"}
-                        {formatCurrency(
-                          entry.amount
-                        )}
-                      </Text>
+                        <Ionicons
+                          name={
+                            entry.type ===
+                            "payment"
+                              ? "arrow-down-outline"
+                              : "cart-outline"
+                          }
+                          size={17}
+                          color={
+                            entry.type ===
+                            "payment"
+                              ? colors.success
+                              : colors.navy
+                          }
+                        />
+                      </View>
 
-                      <Text style={styles.historyType}>
-                        {entry.type === "payment"
-                          ? "Payment"
-                          : entry.type === "credit"
-                            ? "Utang"
-                            : "Cash sale"}
-                      </Text>
+                      <View
+                        style={
+                          styles.rowMain
+                        }
+                      >
+                        <Text
+                          style={
+                            styles.dayDate
+                          }
+                          numberOfLines={1}
+                        >
+                          {entry.label}
+                        </Text>
+
+                        <Text
+                          style={
+                            styles.metaText
+                          }
+                          numberOfLines={1}
+                        >
+                          {entry.debtor_name
+                            ? `${entry.debtor_name} - `
+                            : ""}
+                          {formatDate(
+                            entry.date
+                          )}
+                        </Text>
+                      </View>
+
+                      <View
+                        style={
+                          styles.historyAmountBox
+                        }
+                      >
+                        <Text
+                          style={[
+                            styles.historyAmount,
+
+                            entry.type ===
+                              "payment" &&
+                              styles.paymentAmount,
+                          ]}
+                        >
+                          {entry.type ===
+                          "payment"
+                            ? "-"
+                            : "+"}
+
+                          {formatCurrency(
+                            entry.amount
+                          )}
+                        </Text>
+
+                        <Text
+                          style={
+                            styles.historyType
+                          }
+                        >
+                          {entry.type ===
+                          "payment"
+                            ? "Payment"
+                            : entry.type ===
+                                "credit"
+                              ? "Utang"
+                              : "Cash sale"}
+                        </Text>
+                      </View>
                     </View>
-                  </View>
-                ))}
+                  )
+                )}
               </Card>
             )}
           </>
         )}
 
+        {/* ================================================== */}
         {/* BACKUP */}
+        {/* ================================================== */}
+
         {tab === "backup" && (
           <>
             <SectionHeader
@@ -619,56 +1190,90 @@ export default function ReportsScreen() {
               subtitle="Protect and export your local records"
             />
 
-            <Card style={styles.featureCard}>
-              <View style={styles.featureTop}>
-                <View style={styles.featureIcon}>
+            <Card
+              style={styles.featureCard}
+            >
+              <View
+                style={styles.featureTop}
+              >
+                <View
+                  style={styles.featureIcon}
+                >
                   <Ionicons
                     name="cloud-upload-outline"
                     size={26}
-                    color={colors.navy}
+                    color={
+                      colors.navy
+                    }
                   />
                 </View>
 
-                <View style={styles.featureBadge}>
+                <View
+                  style={
+                    styles.featureBadge
+                  }
+                >
                   <Ionicons
                     name="shield-checkmark-outline"
                     size={12}
-                    color={colors.success}
+                    color={
+                      colors.success
+                    }
                   />
 
-                  <Text style={styles.featureBadgeText}>
+                  <Text
+                    style={
+                      styles.featureBadgeText
+                    }
+                  >
                     LOCAL DATA
                   </Text>
                 </View>
               </View>
 
-              <Text style={styles.backupTitle}>
+              <Text
+                style={styles.backupTitle}
+              >
                 Export local records
               </Text>
 
-              <Text style={styles.backupText}>
-                Share a JSON backup containing
-                debtors, inventory, sales, and
+              <Text
+                style={styles.backupText}
+              >
+                Share a JSON backup
+                containing debtors,
+                inventory, sales, and
                 payments.
               </Text>
 
-              <View style={styles.infoStrip}>
+              <View
+                style={styles.infoStrip}
+              >
                 <Ionicons
                   name="information-circle-outline"
                   size={16}
                   color={colors.navy}
                 />
 
-                <Text style={styles.infoStripText}>
-                  Keep a backup somewhere safe so
-                  your records are easy to restore.
+                <Text
+                  style={
+                    styles.infoStripText
+                  }
+                >
+                  Keep a backup somewhere
+                  safe so your records are
+                  easy to restore.
                 </Text>
               </View>
 
               <Button
                 title="Share backup"
-                onPress={handleShareBackup}
-                loading={backupLoading}
+                onPress={
+                  handleShareBackup
+                }
+                loading={
+                  backupLoading
+                }
                 icon={
                   <Ionicons
                     name="share-outline"
@@ -685,47 +1290,80 @@ export default function ReportsScreen() {
               subtitle="Print or save a readable report"
             />
 
-            <Card style={styles.featureCard}>
-              <View style={styles.reportOutputHeader}>
-                <View style={styles.featureIcon}>
+            <Card
+              style={styles.featureCard}
+            >
+              <View
+                style={
+                  styles.reportOutputHeader
+                }
+              >
+                <View
+                  style={styles.featureIcon}
+                >
                   <Ionicons
                     name="document-text-outline"
                     size={26}
-                    color={colors.navy}
+                    color={
+                      colors.navy
+                    }
                   />
                 </View>
 
-                <View style={styles.reportHeaderText}>
-                  <Text style={styles.backupTitle}>
+                <View
+                  style={
+                    styles.reportHeaderText
+                  }
+                >
+                  <Text
+                    style={
+                      styles.backupTitle
+                    }
+                  >
                     Print or save reports
                   </Text>
 
-                  <Text style={styles.backupText}>
-                    Create a printable report with
-                    sales, unpaid balances, recent
-                    history, and stock watch.
+                  <Text
+                    style={
+                      styles.backupText
+                    }
+                  >
+                    Create a printable
+                    report with sales,
+                    unpaid balances,
+                    recent history, and
+                    stock watch.
                   </Text>
                 </View>
               </View>
 
-              <View style={styles.reportActions}>
+              <View
+                style={
+                  styles.reportActions
+                }
+              >
                 <Button
                   title="Print Reports"
                   variant="ghost"
                   onPress={() =>
                     printReports(false)
                   }
-                  loading={reportLoading}
-                  disabled={reportLoading}
+                  loading={
+                    reportLoading
+                  }
+                  disabled={
+                    reportLoading
+                  }
                   icon={
                     <Ionicons
                       name="print-outline"
                       size={18}
-                      color={colors.navy}
+                      color={
+                        colors.navy
+                      }
                     />
                   }
                 />
-
               </View>
             </Card>
 
@@ -736,82 +1374,148 @@ export default function ReportsScreen() {
             />
 
             {lowStock.length === 0 ? (
-              <View style={styles.healthyCard}>
-                <View style={styles.healthyIcon}>
+              <View
+                style={
+                  styles.healthyCard
+                }
+              >
+                <View
+                  style={
+                    styles.healthyIcon
+                  }
+                >
                   <Ionicons
                     name="checkmark-circle-outline"
                     size={24}
-                    color={colors.success}
+                    color={
+                      colors.success
+                    }
                   />
                 </View>
 
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.healthyTitle}>
-                    Stock levels look healthy
+                <View
+                  style={{ flex: 1 }}
+                >
+                  <Text
+                    style={
+                      styles.healthyTitle
+                    }
+                  >
+                    Stock levels look
+                    healthy
                   </Text>
 
-                  <Text style={styles.healthyText}>
-                    No low-stock products need
-                    attention right now.
+                  <Text
+                    style={
+                      styles.healthyText
+                    }
+                  >
+                    No low-stock products
+                    need attention right
+                    now.
                   </Text>
                 </View>
               </View>
             ) : (
-              <Card style={styles.listCard}>
-                {lowStock.map((p, i) => (
-                  <Pressable
-                    key={p.id}
-                    style={({ pressed }) => [
-                      styles.dayRow,
-                      i !== lowStock.length - 1 &&
-                        styles.rowBorder,
-                      pressed &&
-                        styles.rowPressed,
-                    ]}
-                    onPress={() =>
-                      router.push(
-                        `/inventory/${p.id}`
-                      )
-                    }
-                  >
-                    <View style={styles.stockWarningIcon}>
-                      <Ionicons
-                        name="warning-outline"
-                        size={17}
-                        color={colors.danger}
-                      />
-                    </View>
+              <Card
+                style={styles.listCard}
+              >
+                {lowStock.map(
+                  (p, i) => (
+                    <Pressable
+                      key={p.id}
+                      style={({
+                        pressed,
+                      }) => [
+                        styles.dayRow,
 
-                    <View style={styles.rowMain}>
-                      <Text
-                        style={styles.dayDate}
-                        numberOfLines={1}
+                        i !==
+                          lowStock.length -
+                            1 &&
+                          styles.rowBorder,
+
+                        pressed &&
+                          styles.rowPressed,
+                      ]}
+                      onPress={() =>
+                        router.push(
+                          `/inventory/${p.id}`
+                        )
+                      }
+                    >
+                      <View
+                        style={
+                          styles.stockWarningIcon
+                        }
                       >
-                        {p.name}
-                      </Text>
+                        <Ionicons
+                          name="warning-outline"
+                          size={17}
+                          color={
+                            colors.danger
+                          }
+                        />
+                      </View>
 
-                      <Text style={styles.rowSubtext}>
-                        Low stock
-                      </Text>
-                    </View>
+                      <View
+                        style={
+                          styles.rowMain
+                        }
+                      >
+                        <Text
+                          style={
+                            styles.dayDate
+                          }
+                          numberOfLines={
+                            1
+                          }
+                        >
+                          {p.name}
+                        </Text>
 
-                    <View style={styles.stockRight}>
-                      <Text style={styles.stockNumber}>
-                        {p.stock_quantity}
-                      </Text>
+                        <Text
+                          style={
+                            styles.rowSubtext
+                          }
+                        >
+                          Low stock
+                        </Text>
+                      </View>
 
-                      <Text style={styles.stockLeft}>
-                        left
-                      </Text>
+                      <View
+                        style={
+                          styles.stockRight
+                        }
+                      >
+                        <Text
+                          style={
+                            styles.stockNumber
+                          }
+                        >
+                          {
+                            p.stock_quantity
+                          }
+                        </Text>
 
-                      <Ionicons
-                        name="chevron-forward"
-                        size={16}
-                        color={colors.textMuted}
-                      />
-                    </View>
-                  </Pressable>
-                ))}
+                        <Text
+                          style={
+                            styles.stockLeft
+                          }
+                        >
+                          left
+                        </Text>
+
+                        <Ionicons
+                          name="chevron-forward"
+                          size={16}
+                          color={
+                            colors.textMuted
+                          }
+                        />
+                      </View>
+                    </Pressable>
+                  )
+                )}
               </Card>
             )}
           </>
@@ -823,130 +1527,358 @@ export default function ReportsScreen() {
   );
 }
 
-function buildReportsHtml(report) {
-  const generatedAt = new Date().toLocaleString("en-PH", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+/* ============================================================
+ * PDF REPORT
+ * ============================================================ */
+
+function buildReportsHtml(
+  report
+) {
+  const generatedAt =
+    new Date().toLocaleString(
+      "en-PH",
+      {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }
+    );
+
   const summaryCards = [
-    ["Cash sales", formatCurrency(report.todayCash), "cash"],
-    ["Utang sales", formatCurrency(report.todayCredit), "utang"],
-    ["Total sales", formatCurrency(report.todayGrandTotal), "total"],
-    ["Items sold", String(report.todayItemsSold), "items"],
+    [
+      "Cash sales",
+      formatCurrency(
+        report.todayCash
+      ),
+      "cash",
+    ],
+
+    [
+      "Utang sales",
+      formatCurrency(
+        report.todayCredit
+      ),
+      "utang",
+    ],
+
+    [
+      "Total sales",
+      formatCurrency(
+        report.todayGrandTotal
+      ),
+      "total",
+    ],
+
+    [
+      "Items sold",
+      String(
+        report.todayItemsSold
+      ),
+      "items",
+    ],
   ]
     .map(
-      ([label, value, variant]) => `
+      ([
+        label,
+        value,
+        variant,
+      ]) => `
         <div class="metric ${variant}">
           <p>${label}</p>
           <strong>${value}</strong>
         </div>`
     )
     .join("");
-  const unpaidRows = report.unpaid.length
-    ? report.unpaid
-        .map(
-          (debtor) => `
-            <tr>
-              <td>${escapeHtml(debtor.full_name)}</td>
-              <td class="amount danger">${formatCurrency(debtor.balance)}</td>
-            </tr>`
-        )
-        .join("")
-    : '<tr><td colspan="2" class="empty">Everyone is settled up.</td></tr>';
-  const stockRows = report.lowStock.length
-    ? report.lowStock
-        .map(
-          (product) => `
-            <tr>
-              <td>${escapeHtml(product.name)}</td>
-              <td class="amount danger">${product.stock_quantity} left</td>
-            </tr>`
-        )
-        .join("")
-    : '<tr><td colspan="2" class="empty">Stock levels look healthy.</td></tr>';
-  const historyRows = report.history.length
-    ? report.history
-        .map((entry) => {
-          const type =
-            entry.type === "payment"
-              ? "Payment"
-              : entry.type === "credit"
-                ? "Utang"
-                : "Cash sale";
-          const party = entry.debtor_name || "-";
-          const amountPrefix = entry.type === "payment" ? "-" : "+";
 
-          return `
+  const unpaidRows =
+    report.unpaid.length
+      ? report.unpaid
+          .map(
+            (debtor) => `
             <tr>
-              <td>${formatDate(entry.date)}</td>
-              <td>${escapeHtml(type)}</td>
-              <td>${escapeHtml(party)}</td>
-              <td class="amount ${entry.type === "payment" ? "success" : ""}">${amountPrefix}${formatCurrency(entry.amount)}</td>
+              <td>${escapeHtml(
+                debtor.full_name
+              )}</td>
+              <td class="amount danger">
+                ${formatCurrency(
+                  debtor.balance
+                )}
+              </td>
+            </tr>`
+          )
+          .join("")
+      : `
+        <tr>
+          <td colspan="2" class="empty">
+            Everyone is settled up.
+          </td>
+        </tr>`;
+
+  const stockRows =
+    report.lowStock.length
+      ? report.lowStock
+          .map(
+            (product) => `
+            <tr>
+              <td>${escapeHtml(
+                product.name
+              )}</td>
+
+              <td class="amount danger">
+                ${product.stock_quantity}
+                left
+              </td>
+            </tr>`
+          )
+          .join("")
+      : `
+        <tr>
+          <td colspan="2" class="empty">
+            Stock levels look healthy.
+          </td>
+        </tr>`;
+
+  const historyRows =
+    report.history.length
+      ? report.history
+          .map((entry) => {
+            const type =
+              entry.type ===
+              "payment"
+                ? "Payment"
+                : entry.type ===
+                    "credit"
+                  ? "Utang"
+                  : "Cash sale";
+
+            const party =
+              entry.debtor_name ||
+              "-";
+
+            const amountPrefix =
+              entry.type ===
+              "payment"
+                ? "-"
+                : "+";
+
+            return `
+            <tr>
+              <td>${formatDate(
+                entry.date
+              )}</td>
+
+              <td>
+                ${escapeHtml(type)}
+              </td>
+
+              <td>
+                ${escapeHtml(party)}
+              </td>
+
+              <td class="amount ${
+                entry.type ===
+                "payment"
+                  ? "success"
+                  : ""
+              }">
+                ${amountPrefix}${formatCurrency(
+                  entry.amount
+                )}
+              </td>
             </tr>`;
-        })
-        .join("")
-    : '<tr><td colspan="4" class="empty">No activity recorded yet.</td></tr>';
+          })
+          .join("")
+      : `
+        <tr>
+          <td colspan="4" class="empty">
+            No activity recorded yet.
+          </td>
+        </tr>`;
 
   return `
     <html>
       <head>
         <meta charset="utf-8" />
-        <title>Track and Tally Reports</title>
+
+        <title>
+          Track and Tally Reports
+        </title>
+
         <style>
-          @page { margin: 18mm 14mm; }
-          * { box-sizing: border-box; }
+          @page {
+            margin: 18mm 14mm;
+          }
+
+          * {
+            box-sizing: border-box;
+          }
+
           body {
-            font-family: Arial, Helvetica, sans-serif;
+            font-family:
+              Arial,
+              Helvetica,
+              sans-serif;
+
             color: #20242c;
             margin: 0;
             font-size: 12px;
           }
+
           .report {
             max-width: 800px;
             margin: 0 auto;
           }
+
           header {
-            border-bottom: 3px solid #1E3A5F;
+            border-bottom:
+              3px solid #1E3A5F;
+
             display: flex;
-            justify-content: space-between;
-            align-items: flex-end;
+            justify-content:
+              space-between;
+
+            align-items:
+              flex-end;
+
             padding-bottom: 12px;
             margin-bottom: 18px;
           }
+
           h1 {
             color: #1E3A5F;
             font-size: 25px;
             margin: 0;
           }
+
           .subtitle {
             color: #6B7280;
             font-size: 12px;
             margin: 5px 0 0;
           }
-          .generated { color: #6B7280; font-size: 10px; text-align: right; }
-          h2 { color: #1E3A5F; font-size: 14px; margin: 23px 0 9px; }
-          .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
-          .metric { background: #F7F4EA; border-top: 3px solid #1E3A5F; padding: 10px; }
-          .metric.utang { border-color: #BE4646; }
-          .metric.total { border-color: #378C5A; }
-          .metric.items { border-color: #D9A928; }
-          .metric p { color: #6B7280; font-size: 10px; margin: 0 0 5px; }
-          .metric strong { color: #20242C; font-size: 15px; }
-          .section-head { display: flex; justify-content: space-between; align-items: baseline; }
-          .total-outstanding { color: #BE4646; font-weight: bold; font-size: 11px; }
-          table { border-collapse: collapse; width: 100%; }
-          th { background: #1E3A5F; color: #fff; font-size: 10px; letter-spacing: .2px; text-align: left; }
-          th, td { border-bottom: 1px solid #E4E0D2; padding: 8px; }
-          tr { page-break-inside: avoid; }
-          .amount { text-align: right; font-weight: bold; white-space: nowrap; }
-          .danger { color: #BE4646; }
-          .success { color: #378C5A; }
-          .empty { color: #6B7280; font-style: italic; text-align: center; padding: 13px; }
+
+          .generated {
+            color: #6B7280;
+            font-size: 10px;
+            text-align: right;
+          }
+
+          h2 {
+            color: #1E3A5F;
+            font-size: 14px;
+            margin:
+              23px 0 9px;
+          }
+
+          .metrics {
+            display: grid;
+            grid-template-columns:
+              repeat(4, 1fr);
+
+            gap: 9px;
+          }
+
+          .metric {
+            background: #F7F4EA;
+            border-top:
+              3px solid #1E3A5F;
+
+            padding: 10px;
+          }
+
+          .metric.utang {
+            border-color: #BE4646;
+          }
+
+          .metric.total {
+            border-color: #378C5A;
+          }
+
+          .metric.items {
+            border-color: #D9A928;
+          }
+
+          .metric p {
+            color: #6B7280;
+            font-size: 10px;
+            margin:
+              0 0 5px;
+          }
+
+          .metric strong {
+            color: #20242C;
+            font-size: 15px;
+          }
+
+          .section-head {
+            display: flex;
+            justify-content:
+              space-between;
+
+            align-items:
+              baseline;
+          }
+
+          .total-outstanding {
+            color: #BE4646;
+            font-weight: bold;
+            font-size: 11px;
+          }
+
+          table {
+            border-collapse:
+              collapse;
+
+            width: 100%;
+          }
+
+          th {
+            background: #1E3A5F;
+            color: #fff;
+            font-size: 10px;
+            letter-spacing: .2px;
+            text-align: left;
+          }
+
+          th,
+          td {
+            border-bottom:
+              1px solid #E4E0D2;
+
+            padding: 8px;
+          }
+
+          tr {
+            page-break-inside:
+              avoid;
+          }
+
+          .amount {
+            text-align: right;
+            font-weight: bold;
+            white-space: nowrap;
+          }
+
+          .danger {
+            color: #BE4646;
+          }
+
+          .success {
+            color: #378C5A;
+          }
+
+          .empty {
+            color: #6B7280;
+            font-style: italic;
+            text-align: center;
+            padding: 13px;
+          }
+
           footer {
-            border-top: 1px solid #E4E0D2;
+            border-top:
+              1px solid #E4E0D2;
+
             color: #6B7280;
             font-size: 10px;
             margin-top: 28px;
@@ -955,73 +1887,185 @@ function buildReportsHtml(report) {
           }
         </style>
       </head>
+
       <body>
         <main class="report">
+
           <header>
             <div>
-              <h1>Track and Tally</h1>
-              <p class="subtitle">Store activity report</p>
+              <h1>
+                Track and Tally
+              </h1>
+
+              <p class="subtitle">
+                Store activity report
+              </p>
             </div>
-            <p class="generated">Generated<br />${generatedAt}</p>
+
+            <p class="generated">
+              Generated<br />
+              ${generatedAt}
+            </p>
           </header>
-          <h2>Today's sales summary</h2>
-          <section class="metrics">${summaryCards}</section>
+
+          <h2>
+            Today's sales summary
+          </h2>
+
+          <section class="metrics">
+            ${summaryCards}
+          </section>
 
           <div class="section-head">
-            <h2>Unpaid balances (${report.unpaid.length})</h2>
-            <span class="total-outstanding">Total: ${formatCurrency(report.totalUnpaid)}</span>
+            <h2>
+              Unpaid balances
+              (${report.unpaid.length})
+            </h2>
+
+            <span
+              class="total-outstanding"
+            >
+              Total:
+              ${formatCurrency(
+                report.totalUnpaid
+              )}
+            </span>
           </div>
+
           <table>
-            <thead><tr><th>Customer</th><th class="amount">Balance</th></tr></thead>
-            <tbody>${unpaidRows}</tbody>
+            <thead>
+              <tr>
+                <th>
+                  Customer
+                </th>
+
+                <th class="amount">
+                  Balance
+                </th>
+              </tr>
+            </thead>
+
+            <tbody>
+              ${unpaidRows}
+            </tbody>
           </table>
 
-          <h2>Recent transaction history</h2>
+          <h2>
+            Recent transaction history
+          </h2>
+
           <table>
-            <thead><tr><th>Date</th><th>Type</th><th>Customer</th><th class="amount">Amount</th></tr></thead>
-            <tbody>${historyRows}</tbody>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Customer</th>
+
+                <th class="amount">
+                  Amount
+                </th>
+              </tr>
+            </thead>
+
+            <tbody>
+              ${historyRows}
+            </tbody>
           </table>
 
-          <h2>Inventory watch</h2>
+          <h2>
+            Inventory watch
+          </h2>
+
           <table>
-            <thead><tr><th>Product</th><th class="amount">Stock</th></tr></thead>
-            <tbody>${stockRows}</tbody>
+            <thead>
+              <tr>
+                <th>
+                  Product
+                </th>
+
+                <th class="amount">
+                  Stock
+                </th>
+              </tr>
+            </thead>
+
+            <tbody>
+              ${stockRows}
+            </tbody>
           </table>
-          <footer>Generated by Track and Tally</footer>
+
+          <footer>
+            Generated by Track and Tally
+          </footer>
+
         </main>
       </body>
     </html>
   `;
 }
 
+/* ============================================================
+ * HELPERS
+ * ============================================================ */
+
 function escapeHtml(value) {
   return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    .replace(
+      /&/g,
+      "&amp;"
+    )
+    .replace(
+      /</g,
+      "&lt;"
+    )
+    .replace(
+      />/g,
+      "&gt;"
+    )
+    .replace(
+      /"/g,
+      "&quot;"
+    )
+    .replace(
+      /'/g,
+      "&#39;"
+    );
 }
 
-function openWebPrintDialog(html) {
-  const printWindow = globalThis.window?.open("", "_blank");
+function openWebPrintDialog(
+  html
+) {
+  const printWindow =
+    globalThis.window?.open(
+      "",
+      "_blank"
+    );
 
   if (!printWindow) {
     Alert.alert(
       "Print blocked",
       "Allow pop-ups for this app, then try again."
     );
+
     return;
   }
 
-  printWindow.document.write(html);
+  printWindow.document.write(
+    html
+  );
+
   printWindow.document.close();
   printWindow.focus();
   printWindow.print();
 }
 
-function getExportErrorMessage(error) {
-  const message = error instanceof Error ? error.message : "";
+function getExportErrorMessage(
+  error
+) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : "";
 
   if (message) {
     return message;
@@ -1030,17 +2074,36 @@ function getExportErrorMessage(error) {
   return "Please restart the app and try again.";
 }
 
-function getHistoryDateKey(value) {
-  return String(value || "").slice(0, 10);
+function getHistoryDateKey(
+  value
+) {
+  return String(
+    value || ""
+  ).slice(0, 10);
 }
 
-function HistoryFilterDropdown({ title, value, options, onChange }) {
-  const [visible, setVisible] = useState(false);
-  const selectedOption = options.find(
-    (option) => option.value === value
-  );
+/* ============================================================
+ * HISTORY FILTER DROPDOWN
+ * ============================================================ */
 
-  function selectOption(nextValue) {
+function HistoryFilterDropdown({
+  title,
+  value,
+  options,
+  onChange,
+}) {
+  const [visible, setVisible] =
+    useState(false);
+
+  const selectedOption =
+    options.find(
+      (option) =>
+        option.value === value
+    );
+
+  function selectOption(
+    nextValue
+  ) {
     onChange(nextValue);
     setVisible(false);
   }
@@ -1050,17 +2113,29 @@ function HistoryFilterDropdown({ title, value, options, onChange }) {
       <Pressable
         style={({ pressed }) => [
           styles.filterDropdown,
-          pressed && styles.filterDropdownPressed,
+
+          pressed &&
+            styles.filterDropdownPressed,
         ]}
-        onPress={() => setVisible(true)}
+        onPress={() =>
+          setVisible(true)
+        }
       >
-        <Text style={styles.filterDropdownText}>
-          {selectedOption?.label || "Select an option"}
+        <Text
+          style={
+            styles.filterDropdownText
+          }
+        >
+          {selectedOption?.label ||
+            "Select an option"}
         </Text>
+
         <Ionicons
           name="chevron-down"
           size={18}
-          color={colors.textMuted}
+          color={
+            colors.textMuted
+          }
         />
       </Pressable>
 
@@ -1068,41 +2143,84 @@ function HistoryFilterDropdown({ title, value, options, onChange }) {
         visible={visible}
         transparent
         animationType="fade"
-        onRequestClose={() => setVisible(false)}
+        onRequestClose={() =>
+          setVisible(false)
+        }
       >
         <Pressable
-          style={styles.filterModalOverlay}
-          onPress={() => setVisible(false)}
+          style={
+            styles.filterModalOverlay
+          }
+          onPress={() =>
+            setVisible(false)
+          }
         >
-          <Pressable style={styles.filterModal}>
-            <Text style={styles.filterModalTitle}>{title}</Text>
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.filterOptions}
+          <Pressable
+            style={
+              styles.filterModal
+            }
+          >
+            <Text
+              style={
+                styles.filterModalTitle
+              }
             >
-              {options.map((option) => (
-                <Pressable
-                  key={option.value}
-                  style={({ pressed }) => [
-                    styles.filterOption,
-                    option.value === value &&
-                      styles.filterOptionSelected,
-                    pressed && styles.filterDropdownPressed,
-                  ]}
-                  onPress={() => selectOption(option.value)}
-                >
-                  <Text style={styles.filterOptionText}>
-                    {option.label}
-                  </Text>
-                  {option.value === value && (
-                    <Ionicons
-                      name="checkmark"
-                      size={19}
-                      color={colors.success}
-                    />
-                  )}
-                </Pressable>
-              ))}
+              {title}
+            </Text>
+
+            <ScrollView
+              showsVerticalScrollIndicator={
+                false
+              }
+              contentContainerStyle={
+                styles.filterOptions
+              }
+            >
+              {options.map(
+                (option) => (
+                  <Pressable
+                    key={
+                      option.value
+                    }
+                    style={({
+                      pressed,
+                    }) => [
+                      styles.filterOption,
+
+                      option.value ===
+                        value &&
+                        styles.filterOptionSelected,
+
+                      pressed &&
+                        styles.filterDropdownPressed,
+                    ]}
+                    onPress={() =>
+                      selectOption(
+                        option.value
+                      )
+                    }
+                  >
+                    <Text
+                      style={
+                        styles.filterOptionText
+                      }
+                    >
+                      {option.label}
+                    </Text>
+
+                    {option.value ===
+                      value && (
+                      <Ionicons
+                        name="checkmark"
+                        size={19}
+                        color={
+                          colors.success
+                        }
+                      />
+                    )}
+                  </Pressable>
+                )
+              )}
             </ScrollView>
           </Pressable>
         </Pressable>
@@ -1111,14 +2229,22 @@ function HistoryFilterDropdown({ title, value, options, onChange }) {
   );
 }
 
+/* ============================================================
+ * SECTION HEADER
+ * ============================================================ */
+
 function SectionHeader({
   icon,
   title,
   subtitle,
 }) {
   return (
-    <View style={styles.sectionHeader}>
-      <View style={styles.sectionIcon}>
+    <View
+      style={styles.sectionHeader}
+    >
+      <View
+        style={styles.sectionIcon}
+      >
         <Ionicons
           name={icon}
           size={18}
@@ -1127,17 +2253,27 @@ function SectionHeader({
       </View>
 
       <View style={{ flex: 1 }}>
-        <Text style={styles.sectionTitle}>
+        <Text
+          style={styles.sectionTitle}
+        >
           {title}
         </Text>
 
-        <Text style={styles.sectionSubtitle}>
+        <Text
+          style={
+            styles.sectionSubtitle
+          }
+        >
           {subtitle}
         </Text>
       </View>
     </View>
   );
 }
+
+/* ============================================================
+ * TAB BUTTON
+ * ============================================================ */
 
 function TabButton({
   label,
@@ -1149,15 +2285,21 @@ function TabButton({
     <Pressable
       style={({ pressed }) => [
         styles.tabBtn,
-        active && styles.tabBtnActive,
-        pressed && styles.tabPressed,
+
+        active &&
+          styles.tabBtnActive,
+
+        pressed &&
+          styles.tabPressed,
       ]}
       onPress={onPress}
     >
       <View
         style={[
           styles.tabIcon,
-          active && styles.tabIconActive,
+
+          active &&
+            styles.tabIconActive,
         ]}
       >
         <Ionicons
@@ -1174,7 +2316,9 @@ function TabButton({
       <Text
         style={[
           styles.tabText,
-          active && styles.tabTextActive,
+
+          active &&
+            styles.tabTextActive,
         ]}
       >
         {label}
@@ -1182,6 +2326,10 @@ function TabButton({
     </Pressable>
   );
 }
+
+/* ============================================================
+ * METRIC CARD
+ * ============================================================ */
 
 function MetricCard({
   label,
@@ -1192,13 +2340,19 @@ function MetricCard({
   iconBackground = "cream",
 }) {
   return (
-    <Card style={styles.metricCard}>
+    <Card
+      style={styles.metricCard}
+    >
       <View
         style={[
           styles.metricIcon,
-          iconBackground === "danger" &&
+
+          iconBackground ===
+            "danger" &&
             styles.metricIconDanger,
-          iconBackground === "success" &&
+
+          iconBackground ===
+            "success" &&
             styles.metricIconSuccess,
         ]}
       >
@@ -1215,16 +2369,20 @@ function MetricCard({
         />
       </View>
 
-      <Text style={styles.metricLabel}>
+      <Text
+        style={styles.metricLabel}
+      >
         {label}
       </Text>
 
       <Text
         style={[
           styles.metricValue,
+
           danger && {
             color: colors.danger,
           },
+
           success && {
             color: colors.success,
           },
@@ -1238,640 +2396,1098 @@ function MetricCard({
   );
 }
 
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: colors.cream,
-  },
+/* ============================================================
+ * STYLES
+ * ============================================================ */
 
-  /* ---------------- HEADER TABS ---------------- */
-
-  tabsOuter: {
-    paddingHorizontal: spacing.md,
-    paddingTop: 4,
-    paddingBottom: spacing.sm,
-  },
-
-  tabs: {
-    flexDirection: "row",
-    backgroundColor: colors.white,
-    borderRadius: 16,
-    padding: 4,
-    borderWidth: 1,
-    borderColor: colors.border,
-
-    shadowColor: colors.navy,
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    shadowOffset: {
-      width: 0,
-      height: 3,
+const styles =
+  StyleSheet.create({
+    safe: {
+      flex: 1,
+      backgroundColor:
+        colors.cream,
     },
 
-    elevation: 2,
-  },
+    /* ---------------- HEADER TABS ---------------- */
 
-  tabBtn: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: 52,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 3,
-  },
+    tabsOuter: {
+      paddingHorizontal:
+        spacing.md,
+      paddingTop: 4,
+      paddingBottom:
+        spacing.sm,
+    },
 
-  tabBtnActive: {
-    backgroundColor: colors.navy,
-  },
+    tabs: {
+      flexDirection:
+        "row",
 
-  tabPressed: {
-    opacity: 0.78,
-    transform: [
-      {
-        scale: 0.97,
+      backgroundColor:
+        colors.white,
+
+      borderRadius: 16,
+
+      padding: 4,
+
+      borderWidth: 1,
+
+      borderColor:
+        colors.border,
+
+      shadowColor:
+        colors.navy,
+
+      shadowOpacity:
+        0.05,
+
+      shadowRadius: 8,
+
+      shadowOffset: {
+        width: 0,
+        height: 3,
       },
-    ],
-  },
 
-  tabIcon: {
-    width: 26,
-    height: 26,
-    borderRadius: 9,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  tabIconActive: {
-    backgroundColor: "rgba(255,255,255,0.12)",
-  },
-
-  tabText: {
-    fontSize: 10,
-    fontWeight: "800",
-    color: colors.textMuted,
-  },
-
-  tabTextActive: {
-    color: colors.white,
-  },
-
-  /* ---------------- SCROLL CONTENT ---------------- */
-
-  container: {
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom:
-      bottomNavHeight + spacing.xl + 20,
-    gap: spacing.md,
-  },
-
-  /* ---------------- SECTION HEADER ---------------- */
-
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    marginTop: 4,
-  },
-
-  sectionIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-
-    shadowColor: colors.navy,
-    shadowOpacity: 0.035,
-    shadowRadius: 5,
-    shadowOffset: {
-      width: 0,
-      height: 2,
+      elevation: 2,
     },
 
-    elevation: 1,
-  },
+    tabBtn: {
+      flex: 1,
+      minWidth: 0,
+      minHeight: 52,
+      borderRadius: 12,
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 3,
+    },
 
-  sectionTitle: {
-    ...typography.heading,
-    fontSize: 15,
-    color: colors.navy,
-  },
+    tabBtnActive: {
+      backgroundColor:
+        colors.navy,
+    },
 
-  sectionSubtitle: {
-    fontSize: 10,
-    color: colors.textMuted,
-    marginTop: 2,
-  },
+    tabPressed: {
+      opacity: 0.78,
 
-  /* ---------------- SUMMARY ---------------- */
+      transform: [
+        {
+          scale: 0.97,
+        },
+      ],
+    },
 
-  summaryGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm,
-  },
+    tabIcon: {
+      width: 26,
+      height: 26,
+      borderRadius: 9,
+      alignItems: "center",
+      justifyContent: "center",
+    },
 
-  metricCard: {
-    width: "48%",
-    flexGrow: 1,
-    minHeight: 124,
-    borderRadius: 18,
-    alignItems: "flex-start",
-    justifyContent: "center",
-    padding: 15,
-    gap: 6,
-  },
+    tabIconActive: {
+      backgroundColor:
+        "rgba(255,255,255,0.12)",
+    },
 
-  metricIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: colors.cream,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 2,
-  },
+    tabText: {
+      fontSize: 10,
+      fontWeight: "800",
+      color:
+        colors.textMuted,
+    },
 
-  metricIconDanger: {
-    backgroundColor: "rgba(190,70,70,0.10)",
-  },
+    tabTextActive: {
+      color:
+        colors.white,
+    },
 
-  metricIconSuccess: {
-    backgroundColor: "rgba(55,140,90,0.10)",
-  },
+    /* ---------------- SCROLL CONTENT ---------------- */
 
-  metricLabel: {
-    fontSize: 10,
-    color: colors.textMuted,
-    fontWeight: "700",
-  },
+    container: {
+      paddingHorizontal:
+        spacing.md,
 
-  metricValue: {
-    fontSize: 19,
-    fontWeight: "900",
-    color: colors.text,
-    maxWidth: "100%",
-  },
+      paddingTop:
+        spacing.sm,
 
-  /* ---------------- LIST CARDS ---------------- */
+      paddingBottom:
+        bottomNavHeight +
+        spacing.xl +
+        20,
 
-  listCard: {
-    padding: 0,
-    overflow: "hidden",
-    borderRadius: 18,
-  },
+      gap:
+        spacing.md,
+    },
 
-  dayRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 13,
-    paddingVertical: 13,
-    minHeight: 70,
-  },
+    /* ---------------- SECTION HEADER ---------------- */
 
-  rowBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
+    sectionHeader: {
+      flexDirection:
+        "row",
 
-  rowPressed: {
-    backgroundColor: colors.cream,
-  },
+      alignItems:
+        "center",
 
-  dateIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: colors.cream,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
+      gap:
+        spacing.sm,
 
-  personIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: colors.cream,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
+      marginTop: 4,
+    },
 
-  rowMain: {
-    flex: 1,
-    minWidth: 0,
-  },
+    sectionIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+      backgroundColor:
+        colors.white,
 
-  dayDate: {
-    fontSize: 13,
-    fontWeight: "900",
-    color: colors.text,
-  },
+      borderWidth: 1,
 
-  rowSubtext: {
-    fontSize: 10,
-    color: colors.textMuted,
-    marginTop: 3,
-  },
+      borderColor:
+        colors.border,
 
-  metaText: {
-    fontSize: 10,
-    color: colors.textMuted,
-    marginTop: 4,
-  },
+      alignItems:
+        "center",
 
-  rowAmounts: {
-    alignItems: "flex-end",
-    gap: 5,
-  },
+      justifyContent:
+        "center",
 
-  amountLine: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-  },
+      shadowColor:
+        colors.navy,
 
-  amountDot: {
-    width: 6,
-    height: 6,
-    borderRadius: radius.full,
-  },
+      shadowOpacity:
+        0.035,
 
-  cashDot: {
-    backgroundColor: colors.navy,
-  },
+      shadowRadius: 5,
 
-  creditDot: {
-    backgroundColor: colors.success,
-  },
+      shadowOffset: {
+        width: 0,
+        height: 2,
+      },
 
-  dayCredit: {
-    fontSize: 11,
-    fontWeight: "900",
-    color: colors.danger,
-  },
+      elevation: 1,
+    },
 
-  dayPayment: {
-    fontSize: 10,
-    fontWeight: "800",
-    color: colors.success,
-  },
+    sectionTitle: {
+      ...typography.heading,
+      fontSize: 15,
+      color:
+        colors.navy,
+    },
 
-  /* ---------------- UNPAID ---------------- */
+    sectionSubtitle: {
+      fontSize: 10,
+      color:
+        colors.textMuted,
+      marginTop: 2,
+    },
 
-  outstandingCard: {
-    backgroundColor: colors.navy,
-    borderRadius: 20,
-    padding: 18,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 13,
+    /* ---------------- SALES PERIOD FILTER ---------------- */
 
-    shadowColor: colors.navy,
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    shadowOffset: {
-      width: 0,
+    salesPeriodCard: {
+      borderRadius: 18,
+      padding: 14,
+      gap: 12,
+    },
+
+    salesPeriodHeader: {
+      flexDirection:
+        "row",
+
+      alignItems:
+        "center",
+
+      justifyContent:
+        "space-between",
+    },
+
+    salesPeriodTitle: {
+      fontSize: 14,
+      fontWeight: "900",
+      color:
+        colors.navy,
+    },
+
+    salesPeriodSubtitle: {
+      fontSize: 10,
+      color:
+        colors.textMuted,
+      marginTop: 3,
+    },
+
+    salesPeriodButtons: {
+      flexDirection:
+        "row",
+      gap: 7,
+    },
+
+    salesPeriodButton: {
+      flex: 1,
+      minHeight: 42,
+      borderRadius: 12,
+
+      backgroundColor:
+        colors.cream,
+
+      borderWidth: 1,
+
+      borderColor:
+        colors.border,
+
+      alignItems:
+        "center",
+
+      justifyContent:
+        "center",
+
+      flexDirection:
+        "row",
+
+      gap: 5,
+    },
+
+    salesPeriodButtonActive: {
+      backgroundColor:
+        colors.navy,
+
+      borderColor:
+        colors.navy,
+    },
+
+    salesPeriodButtonPressed: {
+      opacity: 0.78,
+
+      transform: [
+        {
+          scale: 0.97,
+        },
+      ],
+    },
+
+    salesPeriodButtonText: {
+      fontSize: 11,
+      fontWeight: "900",
+      color:
+        colors.navy,
+    },
+
+    salesPeriodButtonTextActive: {
+      color:
+        colors.white,
+    },
+
+    /* ---------------- SUMMARY ---------------- */
+
+    summaryGrid: {
+      flexDirection:
+        "row",
+
+      flexWrap:
+        "wrap",
+
+      gap:
+        spacing.sm,
+    },
+
+    metricCard: {
+      width: "48%",
+
+      flexGrow: 1,
+
+      minHeight: 124,
+
+      borderRadius: 18,
+
+      alignItems:
+        "flex-start",
+
+      justifyContent:
+        "center",
+
+      padding: 15,
+
+      gap: 6,
+    },
+
+    metricIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+
+      backgroundColor:
+        colors.cream,
+
+      alignItems:
+        "center",
+
+      justifyContent:
+        "center",
+
+      marginBottom: 2,
+    },
+
+    metricIconDanger: {
+      backgroundColor:
+        "rgba(190,70,70,0.10)",
+    },
+
+    metricIconSuccess: {
+      backgroundColor:
+        "rgba(55,140,90,0.10)",
+    },
+
+    metricLabel: {
+      fontSize: 10,
+
+      color:
+        colors.textMuted,
+
+      fontWeight: "700",
+    },
+
+    metricValue: {
+      fontSize: 19,
+
+      fontWeight: "900",
+
+      color:
+        colors.text,
+
+      maxWidth: "100%",
+    },
+
+    /* ---------------- LIST CARDS ---------------- */
+
+    listCard: {
+      padding: 0,
+
+      overflow:
+        "hidden",
+
+      borderRadius: 18,
+    },
+
+    dayRow: {
+      flexDirection:
+        "row",
+
+      alignItems:
+        "center",
+
+      gap: 10,
+
+      paddingHorizontal: 13,
+
+      paddingVertical: 13,
+
+      minHeight: 70,
+    },
+
+    rowBorder: {
+      borderBottomWidth: 1,
+
+      borderBottomColor:
+        colors.border,
+    },
+
+    rowPressed: {
+      backgroundColor:
+        colors.cream,
+    },
+
+    dateIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+
+      backgroundColor:
+        colors.cream,
+
+      alignItems:
+        "center",
+
+      justifyContent:
+        "center",
+
+      flexShrink: 0,
+    },
+
+    personIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+
+      backgroundColor:
+        colors.cream,
+
+      alignItems:
+        "center",
+
+      justifyContent:
+        "center",
+
+      flexShrink: 0,
+    },
+
+    rowMain: {
+      flex: 1,
+      minWidth: 0,
+    },
+
+    dayDate: {
+      fontSize: 13,
+
+      fontWeight: "900",
+
+      color:
+        colors.text,
+    },
+
+    rowSubtext: {
+      fontSize: 10,
+
+      color:
+        colors.textMuted,
+
+      marginTop: 3,
+    },
+
+    metaText: {
+      fontSize: 10,
+
+      color:
+        colors.textMuted,
+
+      marginTop: 4,
+    },
+
+    rowAmounts: {
+      alignItems:
+        "flex-end",
+
+      gap: 5,
+    },
+
+    salesRowTotal: {
+      fontSize: 13,
+
+      fontWeight: "900",
+
+      color:
+        colors.navy,
+
+      marginBottom: 2,
+    },
+
+    amountLine: {
+      flexDirection:
+        "row",
+
+      alignItems:
+        "center",
+
+      gap: 5,
+    },
+
+    amountDot: {
+      width: 6,
       height: 6,
+
+      borderRadius:
+        radius.full,
     },
 
-    elevation: 5,
-  },
-
-  outstandingIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 15,
-    backgroundColor: "rgba(255,255,255,0.10)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  outstandingInfo: {
-    flex: 1,
-  },
-
-  totalLabel: {
-    color: colors.goldLight,
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 0.3,
-  },
-
-  totalValue: {
-    color: colors.white,
-    fontSize: 27,
-    fontWeight: "900",
-    marginTop: 2,
-  },
-
-  outstandingHint: {
-    color: "rgba(255,255,255,0.65)",
-    fontSize: 10,
-    marginTop: 2,
-  },
-
-  balanceRight: {
-    alignItems: "flex-end",
-    flexDirection: "row",
-    gap: 6,
-  },
-
-  balanceAmount: {
-    color: colors.danger,
-    fontSize: 13,
-    fontWeight: "900",
-  },
-
-  /* ---------------- HISTORY ---------------- */
-
-  historyFiltersCard: {
-    borderRadius: 18,
-    gap: 9,
-    padding: 14,
-  },
-
-  filterLabel: {
-    color: colors.textMuted,
-    fontSize: 10,
-    fontWeight: "800",
-    marginTop: 2,
-  },
-
-  filterDropdown: {
-    backgroundColor: colors.cream,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    minHeight: 46,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-
-  filterDropdownPressed: {
-    opacity: 0.8,
-  },
-
-  filterDropdownText: {
-    color: colors.text,
-    fontSize: 13,
-    fontWeight: "800",
-  },
-
-  filterModalOverlay: {
-    flex: 1,
-    justifyContent: "center",
-    padding: spacing.lg,
-    backgroundColor: "rgba(0,0,0,0.35)",
-  },
-
-  filterModal: {
-    maxHeight: "75%",
-    borderRadius: 18,
-    padding: spacing.md,
-    backgroundColor: colors.white,
-  },
-
-  filterModalTitle: {
-    color: colors.navy,
-    fontSize: 16,
-    fontWeight: "900",
-    marginBottom: spacing.sm,
-  },
-
-  filterOptions: {
-    gap: 4,
-  },
-
-  filterOption: {
-    minHeight: 48,
-    borderRadius: radius.sm,
-    paddingHorizontal: spacing.sm,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-
-  filterOptionSelected: {
-    backgroundColor: "rgba(217,169,40,0.12)",
-  },
-
-  filterOptionText: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "700",
-  },
-
-  historyIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-
-  historySaleIcon: {
-    backgroundColor: colors.cream,
-  },
-
-  historyPaymentIcon: {
-    backgroundColor: "rgba(55,140,90,0.10)",
-  },
-
-  historyAmountBox: {
-    alignItems: "flex-end",
-    minWidth: 72,
-  },
-
-  historyAmount: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: colors.navy,
-  },
-
-  paymentAmount: {
-    color: colors.success,
-  },
-
-  historyType: {
-    fontSize: 9,
-    color: colors.textMuted,
-    marginTop: 3,
-    fontWeight: "700",
-  },
-
-  /* ---------------- BACKUP ---------------- */
-
-  featureCard: {
-    borderRadius: 20,
-    gap: spacing.sm,
-    padding: 17,
-  },
-
-  featureTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 2,
-  },
-
-  featureIcon: {
-    width: 54,
-    height: 54,
-    borderRadius: 17,
-    backgroundColor: colors.cream,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  featureBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: radius.full,
-    backgroundColor: "rgba(55,140,90,0.10)",
-  },
-
-  featureBadgeText: {
-    fontSize: 8,
-    fontWeight: "900",
-    color: colors.success,
-    letterSpacing: 0.4,
-  },
-
-  backupTitle: {
-    fontSize: 16,
-    fontWeight: "900",
-    color: colors.text,
-    marginTop: 3,
-  },
-
-  backupText: {
-    fontSize: 12,
-    color: colors.textMuted,
-    marginTop: 3,
-    lineHeight: 18,
-  },
-
-  infoStrip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: colors.cream,
-    borderRadius: 12,
-    paddingHorizontal: 11,
-    paddingVertical: 9,
-    marginTop: 4,
-    marginBottom: 3,
-  },
-
-  infoStripText: {
-    flex: 1,
-    fontSize: 10,
-    color: colors.textMuted,
-    lineHeight: 15,
-  },
-
-  reportOutputHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md,
-  },
-
-  reportHeaderText: {
-    flex: 1,
-  },
-
-  reportActions: {
-    gap: spacing.sm,
-    marginTop: 5,
-  },
-
-  /* ---------------- INVENTORY WATCH ---------------- */
-
-  stockWarningIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: "rgba(190,70,70,0.10)",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-
-  stockRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-
-  stockNumber: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: colors.danger,
-  },
-
-  stockLeft: {
-    fontSize: 10,
-    color: colors.textMuted,
-    fontWeight: "700",
-    marginRight: 2,
-  },
-
-  healthyCard: {
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: "rgba(55,140,90,0.18)",
-    borderRadius: 18,
-    padding: 15,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-
-    shadowColor: colors.navy,
-    shadowOpacity: 0.035,
-    shadowRadius: 7,
-    shadowOffset: {
-      width: 0,
-      height: 3,
+    cashDot: {
+      backgroundColor:
+        colors.navy,
     },
 
-    elevation: 1,
-  },
+    creditDot: {
+      backgroundColor:
+        colors.success,
+    },
 
-  healthyIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: "rgba(55,140,90,0.10)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
+    dayCredit: {
+      fontSize: 10,
 
-  healthyTitle: {
-    fontSize: 13,
-    fontWeight: "900",
-    color: colors.text,
-  },
+      fontWeight: "800",
 
-  healthyText: {
-    fontSize: 10,
-    color: colors.textMuted,
-    marginTop: 3,
-    lineHeight: 15,
-  },
-});
+      color:
+        colors.navy,
+    },
 
+    dayPayment: {
+      fontSize: 10,
 
+      fontWeight: "800",
+
+      color:
+        colors.success,
+    },
+
+    /* ---------------- UNPAID ---------------- */
+
+    outstandingCard: {
+      backgroundColor:
+        colors.navy,
+
+      borderRadius: 20,
+
+      padding: 18,
+
+      flexDirection:
+        "row",
+
+      alignItems:
+        "center",
+
+      gap: 13,
+
+      shadowColor:
+        colors.navy,
+
+      shadowOpacity:
+        0.18,
+
+      shadowRadius: 12,
+
+      shadowOffset: {
+        width: 0,
+        height: 6,
+      },
+
+      elevation: 5,
+    },
+
+    outstandingIcon: {
+      width: 48,
+      height: 48,
+
+      borderRadius: 15,
+
+      backgroundColor:
+        "rgba(255,255,255,0.10)",
+
+      alignItems:
+        "center",
+
+      justifyContent:
+        "center",
+    },
+
+    outstandingInfo: {
+      flex: 1,
+    },
+
+    totalLabel: {
+      color:
+        colors.goldLight,
+
+      fontSize: 10,
+
+      fontWeight: "800",
+
+      letterSpacing: 0.3,
+    },
+
+    totalValue: {
+      color:
+        colors.white,
+
+      fontSize: 27,
+
+      fontWeight: "900",
+
+      marginTop: 2,
+    },
+
+    outstandingHint: {
+      color:
+        "rgba(255,255,255,0.65)",
+
+      fontSize: 10,
+
+      marginTop: 2,
+    },
+
+    balanceRight: {
+      alignItems:
+        "flex-end",
+
+      flexDirection:
+        "row",
+
+      gap: 6,
+    },
+
+    balanceAmount: {
+      color:
+        colors.danger,
+
+      fontSize: 13,
+
+      fontWeight: "900",
+    },
+
+    /* ---------------- HISTORY ---------------- */
+
+    historyFiltersCard: {
+      borderRadius: 18,
+
+      gap: 9,
+
+      padding: 14,
+    },
+
+    filterLabel: {
+      color:
+        colors.textMuted,
+
+      fontSize: 10,
+
+      fontWeight: "800",
+
+      marginTop: 2,
+    },
+
+    filterDropdown: {
+      backgroundColor:
+        colors.cream,
+
+      borderColor:
+        colors.border,
+
+      borderRadius:
+        radius.md,
+
+      borderWidth: 1,
+
+      paddingHorizontal: 12,
+
+      minHeight: 46,
+
+      flexDirection:
+        "row",
+
+      alignItems:
+        "center",
+
+      justifyContent:
+        "space-between",
+    },
+
+    filterDropdownPressed: {
+      opacity: 0.8,
+    },
+
+    filterDropdownText: {
+      color:
+        colors.text,
+
+      fontSize: 13,
+
+      fontWeight: "800",
+    },
+
+    filterModalOverlay: {
+      flex: 1,
+
+      justifyContent:
+        "center",
+
+      padding:
+        spacing.lg,
+
+      backgroundColor:
+        "rgba(0,0,0,0.35)",
+    },
+
+    filterModal: {
+      maxHeight: "75%",
+
+      borderRadius: 18,
+
+      padding:
+        spacing.md,
+
+      backgroundColor:
+        colors.white,
+    },
+
+    filterModalTitle: {
+      color:
+        colors.navy,
+
+      fontSize: 16,
+
+      fontWeight: "900",
+
+      marginBottom:
+        spacing.sm,
+    },
+
+    filterOptions: {
+      gap: 4,
+    },
+
+    filterOption: {
+      minHeight: 48,
+
+      borderRadius:
+        radius.sm,
+
+      paddingHorizontal:
+        spacing.sm,
+
+      flexDirection:
+        "row",
+
+      alignItems:
+        "center",
+
+      justifyContent:
+        "space-between",
+    },
+
+    filterOptionSelected: {
+      backgroundColor:
+        "rgba(217,169,40,0.12)",
+    },
+
+    filterOptionText: {
+      color:
+        colors.text,
+
+      fontSize: 14,
+
+      fontWeight: "700",
+    },
+
+    historyIcon: {
+      width: 38,
+      height: 38,
+
+      borderRadius: 12,
+
+      alignItems:
+        "center",
+
+      justifyContent:
+        "center",
+
+      flexShrink: 0,
+    },
+
+    historySaleIcon: {
+      backgroundColor:
+        colors.cream,
+    },
+
+    historyPaymentIcon: {
+      backgroundColor:
+        "rgba(55,140,90,0.10)",
+    },
+
+    historyAmountBox: {
+      alignItems:
+        "flex-end",
+
+      minWidth: 72,
+    },
+
+    historyAmount: {
+      fontSize: 12,
+
+      fontWeight: "900",
+
+      color:
+        colors.navy,
+    },
+
+    paymentAmount: {
+      color:
+        colors.success,
+    },
+
+    historyType: {
+      fontSize: 9,
+
+      color:
+        colors.textMuted,
+
+      marginTop: 3,
+
+      fontWeight: "700",
+    },
+
+    /* ---------------- BACKUP ---------------- */
+
+    featureCard: {
+      borderRadius: 20,
+
+      gap:
+        spacing.sm,
+
+      padding: 17,
+    },
+
+    featureTop: {
+      flexDirection:
+        "row",
+
+      alignItems:
+        "center",
+
+      justifyContent:
+        "space-between",
+
+      marginBottom: 2,
+    },
+
+    featureIcon: {
+      width: 54,
+      height: 54,
+
+      borderRadius: 17,
+
+      backgroundColor:
+        colors.cream,
+
+      alignItems:
+        "center",
+
+      justifyContent:
+        "center",
+    },
+
+    featureBadge: {
+      flexDirection:
+        "row",
+
+      alignItems:
+        "center",
+
+      gap: 4,
+
+      paddingHorizontal: 8,
+
+      paddingVertical: 5,
+
+      borderRadius:
+        radius.full,
+
+      backgroundColor:
+        "rgba(55,140,90,0.10)",
+    },
+
+    featureBadgeText: {
+      fontSize: 8,
+
+      fontWeight: "900",
+
+      color:
+        colors.success,
+
+      letterSpacing: 0.4,
+    },
+
+    backupTitle: {
+      fontSize: 16,
+
+      fontWeight: "900",
+
+      color:
+        colors.text,
+
+      marginTop: 3,
+    },
+
+    backupText: {
+      fontSize: 12,
+
+      color:
+        colors.textMuted,
+
+      marginTop: 3,
+
+      lineHeight: 18,
+    },
+
+    infoStrip: {
+      flexDirection:
+        "row",
+
+      alignItems:
+        "center",
+
+      gap: 8,
+
+      backgroundColor:
+        colors.cream,
+
+      borderRadius: 12,
+
+      paddingHorizontal: 11,
+
+      paddingVertical: 9,
+
+      marginTop: 4,
+
+      marginBottom: 3,
+    },
+
+    infoStripText: {
+      flex: 1,
+
+      fontSize: 10,
+
+      color:
+        colors.textMuted,
+
+      lineHeight: 15,
+    },
+
+    reportOutputHeader: {
+      flexDirection:
+        "row",
+
+      alignItems:
+        "center",
+
+      gap:
+        spacing.md,
+    },
+
+    reportHeaderText: {
+      flex: 1,
+    },
+
+    reportActions: {
+      gap:
+        spacing.sm,
+
+      marginTop: 5,
+    },
+
+    /* ---------------- INVENTORY WATCH ---------------- */
+
+    stockWarningIcon: {
+      width: 38,
+      height: 38,
+
+      borderRadius: 12,
+
+      backgroundColor:
+        "rgba(190,70,70,0.10)",
+
+      alignItems:
+        "center",
+
+      justifyContent:
+        "center",
+
+      flexShrink: 0,
+    },
+
+    stockRight: {
+      flexDirection:
+        "row",
+
+      alignItems:
+        "center",
+
+      gap: 4,
+    },
+
+    stockNumber: {
+      fontSize: 14,
+
+      fontWeight: "900",
+
+      color:
+        colors.danger,
+    },
+
+    stockLeft: {
+      fontSize: 10,
+
+      color:
+        colors.textMuted,
+
+      fontWeight: "700",
+
+      marginRight: 2,
+    },
+
+    healthyCard: {
+      backgroundColor:
+        colors.white,
+
+      borderWidth: 1,
+
+      borderColor:
+        "rgba(55,140,90,0.18)",
+
+      borderRadius: 18,
+
+      padding: 15,
+
+      flexDirection:
+        "row",
+
+      alignItems:
+        "center",
+
+      gap: 12,
+
+      shadowColor:
+        colors.navy,
+
+      shadowOpacity:
+        0.035,
+
+      shadowRadius: 7,
+
+      shadowOffset: {
+        width: 0,
+        height: 3,
+      },
+
+      elevation: 1,
+    },
+
+    healthyIcon: {
+      width: 44,
+      height: 44,
+
+      borderRadius: 14,
+
+      backgroundColor:
+        "rgba(55,140,90,0.10)",
+
+      alignItems:
+        "center",
+
+      justifyContent:
+        "center",
+    },
+
+    healthyTitle: {
+      fontSize: 13,
+
+      fontWeight: "900",
+
+      color:
+        colors.text,
+    },
+
+    healthyText: {
+      fontSize: 10,
+
+      color:
+        colors.textMuted,
+
+      marginTop: 3,
+
+      lineHeight: 15,
+    },
+  });
