@@ -46,18 +46,29 @@ export default function SellScreen() {
   );
 
   function addToCart(product, saleMode = "package") {
+    const currentQuantity = cart[product.id]?.quantity || 0;
+    const pricing = getSalePricing(product, saleMode);
+
+    if (
+      (currentQuantity + 1) * pricing.stockItems >
+      Number(product.stock_quantity)
+    ) {
+      Alert.alert(
+        "Not enough stock",
+        `${product.name} only has ${product.stock_quantity} item(s) left in stock.`
+      );
+      return;
+    }
+
     setCart((current) => {
       const existing = current[product.id];
-      const currentQuantity = existing?.quantity || 0;
-      const pricing = getSalePricing(product, saleMode);
-
-      if ((currentQuantity + 1) * pricing.stockItems > product.stock_quantity) return current;
+      const nextQuantity = existing?.quantity || 0;
 
       return {
         ...current,
         [product.id]: {
           product,
-          quantity: currentQuantity + 1,
+          quantity: nextQuantity + 1,
           saleMode,
         },
       };
@@ -216,8 +227,10 @@ export default function SellScreen() {
         renderItem={({ item }) => {
           const inCart = cart[item.id]?.quantity || 0;
           const outOfStock = item.stock_quantity <= 0;
+          const saleMode = cart[item.id]?.saleMode || "package";
+          const stockItems = getSalePricing(item, saleMode).stockItems;
           const atMaxStock =
-            inCart >= item.stock_quantity;
+            inCart * stockItems >= item.stock_quantity;
 
           return (
             <View

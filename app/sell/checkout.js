@@ -7,11 +7,13 @@ import {
   Pressable,
   Alert,
   Modal,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
+import * as Print from "expo-print";
 
 import Button from "@/components/Button";
 import Card from "@/components/Card";
@@ -35,6 +37,7 @@ export default function CheckoutScreen() {
 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [receipt, setReceipt] = useState(null);
+  const [printingReceipt, setPrintingReceipt] = useState(false);
 
   const cartItems = useMemo(() => {
     try {
@@ -105,6 +108,31 @@ export default function CheckoutScreen() {
   function handleReceiptDone() {
     setReceipt(null);
     router.replace("/sell");
+  }
+
+  async function handlePrintReceipt() {
+    if (!receipt) return;
+
+    setPrintingReceipt(true);
+
+    try {
+      const receiptHtml = buildReceiptHtml(receipt, user?.storeName);
+
+      if (Platform.OS === "web") {
+        openReceiptPrintDialog(receiptHtml);
+        return;
+      }
+
+      await Print.printAsync({ html: receiptHtml });
+    } catch (error) {
+      console.error("Could not print receipt:", error);
+      Alert.alert(
+        "Could not print receipt",
+        "Please try again."
+      );
+    } finally {
+      setPrintingReceipt(false);
+    }
   }
 
   return (
@@ -771,20 +799,138 @@ export default function CheckoutScreen() {
               </View>
             </ScrollView>
 
-            <Pressable
-              onPress={handleReceiptDone}
-              style={({ pressed }) => [
-                styles.receiptDoneButton,
-                pressed && styles.completeButtonPressed,
-              ]}
-            >
-              <Text style={styles.receiptDoneText}>Done</Text>
-            </Pressable>
+            <View style={styles.receiptActions}>
+              <Pressable
+                onPress={handlePrintReceipt}
+                disabled={printingReceipt}
+                style={({ pressed }) => [
+                  styles.receiptPrintButton,
+                  pressed &&
+                    !printingReceipt &&
+                    styles.completeButtonPressed,
+                  printingReceipt && styles.completeButtonDisabled,
+                ]}
+              >
+                <Ionicons
+                  name="print-outline"
+                  size={18}
+                  color={colors.navy}
+                />
+                <Text style={styles.receiptPrintText}>
+                  {printingReceipt ? "Printing..." : "Print"}
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={handleReceiptDone}
+                style={({ pressed }) => [
+                  styles.receiptDoneButton,
+                  pressed && styles.completeButtonPressed,
+                ]}
+              >
+                <Text style={styles.receiptDoneText}>Done</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
     </SafeAreaView>
   );
+}
+
+function buildReceiptHtml(receipt, storeName) {
+  const itemRows = receipt.items
+    .map((item) => {
+      const price = getSalePricing(
+        item.product,
+        item.saleMode
+      ).unitPrice;
+
+      return `
+        <tr>
+          <td>
+            <strong>${escapeReceiptHtml(item.product.name)}</strong><br />
+            <span>${item.quantity} x ${formatCurrency(price)}</span>
+          </td>
+          <td class="amount">${formatCurrency(item.quantity * price)}</td>
+        </tr>`;
+    })
+    .join("");
+  const payment =
+    receipt.saleType === "credit" ? "Utang" : "Cash";
+  const debtorRow = receipt.debtorName
+    ? `<p><span>Debtor</span><strong>${escapeReceiptHtml(receipt.debtorName)}</strong></p>`
+    : "";
+
+  return `
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Receipt #${receipt.id}</title>
+        <style>
+          @page { margin: 12mm; }
+          * { box-sizing: border-box; }
+          body { color: #20242C; font-family: Arial, Helvetica, sans-serif; font-size: 12px; margin: 0; }
+          main { margin: 0 auto; max-width: 360px; }
+          header { border-bottom: 2px solid #1E3A5F; padding-bottom: 12px; text-align: center; }
+          h1 { color: #1E3A5F; font-size: 22px; margin: 0; }
+          .subtitle, .meta, span { color: #6B7280; }
+          .subtitle { margin: 4px 0 0; }
+          .meta { font-size: 10px; line-height: 1.5; margin: 12px 0; text-align: center; }
+          table { border-collapse: collapse; width: 100%; }
+          td { border-bottom: 1px dashed #D7D2C3; padding: 9px 0; vertical-align: top; }
+          td span { font-size: 10px; }
+          .amount { font-weight: bold; padding-left: 12px; text-align: right; white-space: nowrap; }
+          .details { border-bottom: 1px dashed #D7D2C3; padding: 10px 0; }
+          .details p { display: flex; justify-content: space-between; gap: 12px; margin: 5px 0; }
+          .total { color: #1E3A5F; display: flex; font-size: 17px; justify-content: space-between; margin-top: 14px; }
+          footer { color: #6B7280; font-size: 10px; margin-top: 22px; text-align: center; }
+        </style>
+      </head>
+      <body>
+        <main>
+          <header>
+            <h1>${escapeReceiptHtml(storeName || "My Store")}</h1>
+            <p class="subtitle">Sales receipt</p>
+          </header>
+          <p class="meta">Receipt #${receipt.id}<br />${formatReceiptDate(receipt.createdAt)}</p>
+          <table><tbody>${itemRows}</tbody></table>
+          <section class="details">
+            <p><span>Payment</span><strong>${payment}</strong></p>
+            ${debtorRow}
+          </section>
+          <div class="total"><strong>TOTAL</strong><strong>${formatCurrency(receipt.total)}</strong></div>
+          <footer>Thank you for your purchase.</footer>
+        </main>
+      </body>
+    </html>
+  `;
+}
+
+function escapeReceiptHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function openReceiptPrintDialog(html) {
+  const printWindow = globalThis.window?.open("", "_blank");
+
+  if (!printWindow) {
+    Alert.alert(
+      "Print blocked",
+      "Allow pop-ups for this app, then try again."
+    );
+    return;
+  }
+
+  printWindow.document.write(html);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
 }
 
 function ReceiptRow({ label, value }) {
@@ -1761,13 +1907,36 @@ const styles = StyleSheet.create({
     fontSize: 10,
   },
 
+  receiptActions: {
+    flexDirection: "row",
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+
+  receiptPrintButton: {
+    flex: 1,
+    minHeight: 50,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 6,
+    backgroundColor: colors.cream,
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
+  },
+
+  receiptPrintText: {
+    color: colors.navy,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+
   receiptDoneButton: {
+    flex: 1,
     minHeight: 50,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.goldLight,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
   },
 
   receiptDoneText: {

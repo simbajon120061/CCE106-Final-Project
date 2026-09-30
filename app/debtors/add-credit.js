@@ -74,15 +74,26 @@ export default function AddCreditScreen() {
   /* ------------------------------ CART ------------------------------ */
 
   function addToCart(product, saleMode = "package") {
-    setCart((current) => {
-      const currentQuantity = current[product.id]?.quantity || 0;
-      const pricing = getSalePricing(product, saleMode);
+    const currentQuantity = cart[product.id]?.quantity || 0;
+    const pricing = getSalePricing(product, saleMode);
 
-      if ((currentQuantity + 1) * pricing.stockItems > product.stock_quantity) return current;
+    if (
+      (currentQuantity + 1) * pricing.stockItems >
+      Number(product.stock_quantity)
+    ) {
+      Alert.alert(
+        "Not enough stock",
+        `${product.name} only has ${product.stock_quantity} item(s) left in stock.`
+      );
+      return;
+    }
+
+    setCart((current) => {
+      const nextQuantity = current[product.id]?.quantity || 0;
 
       return {
         ...current,
-        [product.id]: { product, quantity: currentQuantity + 1, saleMode },
+        [product.id]: { product, quantity: nextQuantity + 1, saleMode },
       };
     });
   }
@@ -180,7 +191,9 @@ export default function AddCreditScreen() {
   function renderProduct(item) {
     const inCart = cart[item.id]?.quantity || 0;
     const outOfStock = item.stock_quantity <= 0;
-    const atMaxStock = inCart >= item.stock_quantity;
+    const saleMode = cart[item.id]?.saleMode || "package";
+    const stockItems = getSalePricing(item, saleMode).stockItems;
+    const atMaxStock = inCart * stockItems >= item.stock_quantity;
     const lowStock = item.stock_quantity <= 5;
 
     return (

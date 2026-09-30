@@ -563,7 +563,13 @@ export async function createSale(db, userId, { saleType, debtorId = null, items 
         throw new Error("Quantity must be greater than zero.");
       }
       const saleMode = item.saleMode === "item" ? "item" : "package";
-      const packageSize = Math.max(1, Math.floor(Number(product.measurement_value) || 1));
+      const packageSize =
+        product.unit === "piece"
+          ? Math.max(
+              1,
+              Math.floor(Number(product.measurement_value) || 1)
+            )
+          : 1;
       if (saleMode === "item" && (!product.item_price || packageSize === 1)) {
         throw new Error(`${product.name} is not available for individual-item sales.`);
       }
