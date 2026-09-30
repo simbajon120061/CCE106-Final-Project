@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useState } from "react";
 import { useSQLiteContext } from "expo-sqlite";
+import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import Button from "@/components/Button";
@@ -37,6 +38,7 @@ import { normalizePhoneNumber } from "@/lib/auth";
 
 export default function ProfileScreen() {
   const db = useSQLiteContext();
+  const router = useRouter();
   const { user, login } = useAuth();
 
   const [storeName, setStoreName] = useState(
@@ -230,6 +232,21 @@ export default function ProfileScreen() {
 
             <View style={styles.heroGlowOne} />
             <View style={styles.heroGlowTwo} />
+
+            <Pressable
+              onPress={() => router.replace("/settings")}
+              hitSlop={10}
+              style={({ pressed }) => [
+                styles.backButton,
+                pressed && styles.backButtonPressed,
+              ]}
+            >
+              <Ionicons
+                name="arrow-back"
+                size={20}
+                color={colors.white}
+              />
+            </Pressable>
 
             <View style={styles.avatarOuter}>
               <View style={styles.avatarCircle}>
@@ -952,6 +969,26 @@ const styles = StyleSheet.create({
     bottom: -65,
     backgroundColor: "#24486E",
     opacity: 0.5,
+  },
+
+  backButton: {
+    position: "absolute",
+    top: 14,
+    left: 14,
+    zIndex: 1,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.24)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  backButtonPressed: {
+    opacity: 0.75,
+    transform: [{ scale: 0.94 }],
   },
 
   avatarOuter: {
