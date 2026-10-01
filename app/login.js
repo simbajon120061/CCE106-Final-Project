@@ -349,6 +349,7 @@ export default function LoginScreen() {
             styles.scrollContent
           }
           keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets
           showsVerticalScrollIndicator={false}
         >
 

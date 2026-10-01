@@ -562,19 +562,24 @@ export async function createSale(db, userId, { saleType, debtorId = null, items 
       if (quantity <= 0) {
         throw new Error("Quantity must be greater than zero.");
       }
-      const saleMode = item.saleMode === "item" ? "item" : "package";
-      const packageSize =
-        product.unit === "piece"
-          ? Math.max(
-              1,
-              Math.floor(Number(product.measurement_value) || 1)
-            )
-          : 1;
-      if (saleMode === "item" && (!product.item_price || packageSize === 1)) {
-        throw new Error(`${product.name} is not available for individual-item sales.`);
-      }
-      const stockItems = saleMode === "item" ? 1 : packageSize;
-      const unitPrice = Number(saleMode === "item" ? product.item_price : product.unit_price) || 0;
+      const packageSize = Math.max(
+        1,
+        Math.floor(Number(product.measurement_value) || 1)
+      );
+      const hasPackagePrice =
+        product.unit === "piece" &&
+        Number(product.measurement_value) > 1 &&
+        Number(product.item_price) > 0 &&
+        Number(product.unit_price) > 0 &&
+        Number(product.item_price) !== Number(product.unit_price);
+      const sellPackage =
+        item.saleMode === "package" && hasPackagePrice;
+      const stockItems = sellPackage ? packageSize : 1;
+      const unitPrice = Number(
+        sellPackage
+          ? product.unit_price
+          : product.item_price || product.unit_price
+      ) || 0;
       requireWholePieces(product.unit ?? "piece", quantity * stockItems);
       if (product.stock_quantity < quantity * stockItems) {
         throw new Error(`${product.name} only has ${product.stock_quantity} left in stock.`);

@@ -13,6 +13,7 @@
     },
     "android": {
       "package": "com.trackandtally.app",
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#1E3A5F"

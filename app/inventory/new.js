@@ -31,7 +31,7 @@ export default function NewProductScreen() {
   const [unit, setUnit] = useState("piece");
   const [measurementValue, setMeasurementValue] = useState("");
   const [price, setPrice] = useState("");
-  const [itemPrice, setItemPrice] = useState("");
+  const [packagePrice, setPackagePrice] = useState("");
   const [stock, setStock] = useState("");
   const [threshold, setThreshold] = useState("5");
   const [saving, setSaving] = useState(false);
@@ -40,7 +40,7 @@ export default function NewProductScreen() {
     if (!name.trim() || !price) {
       Alert.alert(
         "Missing info",
-        "Product name and unit price are required."
+        "Product name and selling price are required."
       );
       return;
     }
@@ -59,8 +59,8 @@ export default function NewProductScreen() {
         unit,
         measurement_value:
           measurementValue === "" ? null : Number(measurementValue) || 0,
-        unit_price: Number(price) || 0,
-        item_price: itemPrice === "" ? null : Number(itemPrice) || 0,
+        unit_price: Number(packagePrice) || Number(price) || 0,
+        item_price: Number(price) || 0,
         stock_quantity: Number(stock) || 0,
         low_stock_threshold: Number(threshold) || 5,
       });
@@ -109,6 +109,7 @@ export default function NewProductScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
         contentContainerStyle={styles.form}
       >
         {/* Intro Card */}
@@ -203,7 +204,7 @@ export default function NewProductScreen() {
             </Field>
 
             <Field
-              label="Package price (₱) *"
+              label="Selling price (₱) *"
               icon="cash-outline"
             >
               <View style={styles.inputWithPrefix}>
@@ -223,7 +224,7 @@ export default function NewProductScreen() {
             </Field>
 
             <Field
-              label="Single-item price (₱)"
+              label="Package price (₱)"
               icon="cash-outline"
             >
               <View style={styles.inputWithPrefix}>
@@ -232,15 +233,16 @@ export default function NewProductScreen() {
                 </View>
 
                 <TextInput
-                  value={itemPrice}
-                  onChangeText={setItemPrice}
+                  value={packagePrice}
+                  onChangeText={setPackagePrice}
                   keyboardType="decimal-pad"
-                  placeholder="Optional: price for one item"
+                  placeholder="Optional"
                   placeholderTextColor={colors.textMuted}
                   style={styles.priceInput}
                 />
               </View>
             </Field>
+
           </View>
         </View>
 

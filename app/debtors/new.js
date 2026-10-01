@@ -131,6 +131,7 @@ export default function NewDebtorScreen() {
         contentContainerStyle={styles.form}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
       >
         {/* =====================================================
             PROFILE CARD

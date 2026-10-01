@@ -274,7 +274,9 @@ export default function SellScreen() {
 
                 <View style={styles.productDetails}>
                   <Text style={styles.productPrice}>
-                    {formatCurrency(item.unit_price)}
+                    {formatCurrency(
+                      getSalePricing(item, "item").unitPrice
+                    )}
                   </Text>
 
                   <View style={styles.dot} />

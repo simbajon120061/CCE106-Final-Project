@@ -109,6 +109,7 @@ export default function AddPaymentScreen() {
 
       <ScrollView
         showsVerticalScrollIndicator={false}
+        automaticallyAdjustKeyboardInsets
         contentContainerStyle={styles.form}
       >
         {/* INTRO CARD */}

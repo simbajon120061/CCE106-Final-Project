@@ -47,7 +47,7 @@ export default function EditProductScreen() {
   const [unit, setUnit] = useState("piece");
   const [measurementValue, setMeasurementValue] = useState("");
   const [price, setPrice] = useState("");
-  const [itemPrice, setItemPrice] = useState("");
+  const [packagePrice, setPackagePrice] = useState("");
   const [stock, setStock] = useState("");
   const [threshold, setThreshold] = useState("");
   const [saving, setSaving] = useState(false);
@@ -63,8 +63,13 @@ export default function EditProductScreen() {
       setMeasurementValue(
         p.measurement_value == null ? "" : String(p.measurement_value)
       );
-      setPrice(String(p.unit_price));
-      setItemPrice(p.item_price == null ? "" : String(p.item_price));
+      setPrice(String(p.item_price ?? p.unit_price));
+      setPackagePrice(
+        p.item_price != null &&
+          Number(p.item_price) !== Number(p.unit_price)
+          ? String(p.unit_price)
+          : ""
+      );
       setStock(String(p.stock_quantity));
       setThreshold(String(p.low_stock_threshold));
     });
@@ -74,7 +79,7 @@ export default function EditProductScreen() {
     if (!name.trim() || !price) {
       Alert.alert(
         "Missing info",
-        "Product name and unit price are required."
+        "Product name and selling price are required."
       );
       return;
     }
@@ -93,8 +98,8 @@ export default function EditProductScreen() {
         unit,
         measurement_value:
           measurementValue === "" ? null : Number(measurementValue) || 0,
-        unit_price: Number(price) || 0,
-        item_price: itemPrice === "" ? null : Number(itemPrice) || 0,
+        unit_price: Number(packagePrice) || Number(price) || 0,
+        item_price: Number(price) || 0,
         stock_quantity: Number(stock) || 0,
         low_stock_threshold:
           Number(threshold) || 0,
@@ -193,6 +198,7 @@ export default function EditProductScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
         contentContainerStyle={styles.form}
       >
         {/* ================= PRODUCT SUMMARY ================= */}
@@ -353,7 +359,7 @@ export default function EditProductScreen() {
             </Field>
 
             <Field
-              label="Package price (₱) *"
+              label="Selling price (₱) *"
               icon="cash-outline"
             >
               <View style={styles.priceWrapper}>
@@ -377,7 +383,7 @@ export default function EditProductScreen() {
             </Field>
 
             <Field
-              label="Single-item price (₱)"
+              label="Package price (₱)"
               icon="cash-outline"
             >
               <View style={styles.priceWrapper}>
@@ -386,15 +392,16 @@ export default function EditProductScreen() {
                 </View>
 
                 <TextInput
-                  value={itemPrice}
-                  onChangeText={setItemPrice}
+                  value={packagePrice}
+                  onChangeText={setPackagePrice}
                   keyboardType="decimal-pad"
-                  placeholder="Optional: price for one item"
+                  placeholder="Optional"
                   placeholderTextColor={colors.textMuted}
                   style={styles.priceInput}
                 />
               </View>
             </Field>
+
           </View>
         </View>
 

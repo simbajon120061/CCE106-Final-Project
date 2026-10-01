@@ -91,7 +91,11 @@ export default function EditDebtorScreen() {
         <View style={{ width: 24 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.form}>
+      <ScrollView
+        contentContainerStyle={styles.form}
+        automaticallyAdjustKeyboardInsets
+        keyboardShouldPersistTaps="handled"
+      >
         <DebtorFields
           fullName={fullName}
           setFullName={setFullName}

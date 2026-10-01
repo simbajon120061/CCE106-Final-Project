@@ -221,6 +221,7 @@ export default function ProfileScreen() {
       >
         <ScrollView
           showsVerticalScrollIndicator={false}
+          automaticallyAdjustKeyboardInsets
           contentContainerStyle={styles.container}
         >
 

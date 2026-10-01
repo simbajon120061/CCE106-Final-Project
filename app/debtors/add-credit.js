@@ -236,7 +236,9 @@ export default function AddCreditScreen() {
 
           <View style={styles.productDetails}>
             <Text style={styles.productPrice}>
-              {formatCurrency(item.unit_price)}
+                    {formatCurrency(
+                      getSalePricing(item, "item").unitPrice
+                    )}
             </Text>
 
             <View style={styles.dot} />
@@ -364,6 +366,7 @@ export default function AddCreditScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
         contentContainerStyle={styles.form}
       >
         {/* HERO CARD */}
