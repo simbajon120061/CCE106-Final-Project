@@ -1000,13 +1000,18 @@ export default function ReportsScreen() {
                   },
 
                   {
-                    label: "Payments",
-                    value: "payment",
+                    label: "Cash sale",
+                    value: "cash",
                   },
 
                   {
                     label: "Utang",
                     value: "credit",
+                  },
+
+                  {
+                    label: "Payments",
+                    value: "payment",
                   },
                 ]}
                 onChange={
