@@ -28,24 +28,29 @@ export default function SellScreen() {
   const [products, setProducts] = useState([]);
   const [query, setQuery] = useState("");
   const [cart, setCart] = useState({});
+    const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(
     async (q) => {
+      if (!user?.id) return;
+
       const rows = await getProducts(
         db,
-        user?.id,
+        user.id,
         q?.trim() || undefined
       );
       setProducts(rows);
+      setLoaded(true);
     },
     [db, user?.id]
   );
 
   useFocusEffect(
     useCallback(() => {
-      load(query);
+      load("");
+      setQuery("");
       setCart({});
-    }, [load, query])
+    }, [load])
   );
 
   function addToCart(product, saleMode = "package") {
@@ -221,11 +226,13 @@ export default function SellScreen() {
           ) : null
         }
         ListEmptyComponent={
-          <EmptyState
-            icon="cart-outline"
-            title="No products to sell"
-            subtitle="Add products to inventory first."
-          />
+          loaded ? (
+            <EmptyState
+              icon="cart-outline"
+              title="No products to sell"
+              subtitle="Add products to inventory first."
+            />
+          ) : null
         }
         renderItem={({ item }) => {
           const inCart = cart[item.id]?.quantity || 0;
