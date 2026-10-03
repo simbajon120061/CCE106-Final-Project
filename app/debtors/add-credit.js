@@ -913,7 +913,7 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
 
-  stockTextGood: { color: "#2E7D32" },
+  stockTextGood: { color: "#2E7D32" }, 
   stockTextLow: { color: colors.navy },
   stockTextEmpty: { color: colors.textMuted },
 
