@@ -12,7 +12,6 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
 import EmptyState from "@/components/EmptyState";
-import BottomNav, { bottomNavHeight } from "@/components/BottomNav";
 import TopHeader from "@/components/TopHeader";
 import { colors, spacing, radius } from "@/constants/theme";
 import { formatCurrency } from "@/lib/format";
@@ -542,8 +541,6 @@ export default function DebtorsScreen() {
           />
         </View>
       </Pressable>
-
-      <BottomNav activeTab="debtors" />
     </SafeAreaView>
   );
 }
@@ -865,8 +862,7 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
-    paddingBottom:
-      bottomNavHeight + 105,
+    paddingBottom: 100,
     flexGrow: 1,
   },
 
@@ -1056,8 +1052,7 @@ const styles = StyleSheet.create({
   floatingAddBtn: {
     position: "absolute",
     right: spacing.md,
-    bottom:
-      bottomNavHeight + spacing.md,
+    bottom: spacing.md,
     width: 62,
     height: 62,
     borderRadius: radius.full,

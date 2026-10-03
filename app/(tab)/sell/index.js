@@ -14,7 +14,6 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
 import EmptyState from "@/components/EmptyState";
-import BottomNav, { bottomNavHeight } from "@/components/BottomNav";
 import TopHeader from "@/components/TopHeader";
 import { colors, spacing, radius } from "@/constants/theme";
 import { formatCurrency } from "@/lib/format";
@@ -32,7 +31,11 @@ export default function SellScreen() {
 
   const load = useCallback(
     async (q) => {
-      const rows = await getProducts(db, user?.id, q?.trim() || undefined);
+      const rows = await getProducts(
+        db,
+        user?.id,
+        q?.trim() || undefined
+      );
       setProducts(rows);
     },
     [db, user?.id]
@@ -443,8 +446,6 @@ export default function SellScreen() {
           </View>
         </Pressable>
       )}
-
-      <BottomNav activeTab="sell" />
     </SafeAreaView>
   );
 }
@@ -500,8 +501,7 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
-    paddingBottom:
-      bottomNavHeight + 100,
+    paddingBottom: 100,
     flexGrow: 1,
   },
 
@@ -757,7 +757,7 @@ qtyText: {
     position: "absolute",
     left: spacing.md,
     right: spacing.md,
-    bottom: bottomNavHeight + spacing.sm,
+    bottom: spacing.sm,
     minHeight: 66,
     borderRadius: radius.md,
     backgroundColor: colors.navy,
