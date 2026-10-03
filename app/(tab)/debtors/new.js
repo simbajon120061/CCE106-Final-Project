@@ -17,10 +17,6 @@ import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 
-import BottomNav, {
-  bottomNavHeight,
-} from "@/components/BottomNav";
-
 import {
   colors,
   spacing,
@@ -345,12 +341,6 @@ export default function NewDebtorScreen() {
           </View>
         </View>
       </ScrollView>
-
-      {/* =====================================================
-          BOTTOM NAVIGATION
-      ===================================================== */}
-
-      <BottomNav activeTab="debtors" />
     </SafeAreaView>
   );
 }
@@ -1011,15 +1001,9 @@ const styles = StyleSheet.create({
 
   form: {
     paddingHorizontal: spacing.md,
-
     paddingTop: 14,
-
     gap: 21,
-
-    paddingBottom:
-      bottomNavHeight +
-      spacing.xl +
-      70,
+    paddingBottom:spacing.lg,
   },
 
   /* =====================================================

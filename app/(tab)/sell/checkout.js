@@ -1,3 +1,4 @@
+// checkout.js
 import { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -7,28 +8,22 @@ import {
   Pressable,
   Alert,
   Modal,
-  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
-import * as Print from "expo-print";
 
 import Button from "@/components/Button";
 import Card from "@/components/Card";
-import BottomNav, { bottomNavHeight } from "@/components/BottomNav";
 import { colors, spacing, typography, radius } from "@/constants/theme";
 import { formatCurrency } from "@/lib/format";
 import { createSale, getDebtorOptions } from "@/db/database";
-import { useAuth } from "@/context/AuthContext";
-import { getSalePricing } from "@/lib/inventory";
 
 export default function CheckoutScreen() {
   const { cart } = useLocalSearchParams();
   const db = useSQLiteContext();
   const router = useRouter();
-  const { user } = useAuth();
 
   const [saleType, setSaleType] = useState("cash");
   const [debtors, setDebtors] = useState([]);
@@ -36,8 +31,6 @@ export default function CheckoutScreen() {
   const [saving, setSaving] = useState(false);
 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [receipt, setReceipt] = useState(null);
-  const [printingReceipt, setPrintingReceipt] = useState(false);
 
   const cartItems = useMemo(() => {
     try {
@@ -50,12 +43,12 @@ export default function CheckoutScreen() {
   }, [cart]);
 
   useEffect(() => {
-    getDebtorOptions(db, user?.id).then(setDebtors);
-  }, [db, user?.id]);
+    getDebtorOptions(db).then(setDebtors);
+  }, [db]);
 
   const total = cartItems.reduce(
     (sum, item) =>
-      sum + item.quantity * getSalePricing(item.product, item.saleMode).unitPrice,
+      sum + item.quantity * item.product.unit_price,
     0
   );
 
@@ -80,20 +73,22 @@ export default function CheckoutScreen() {
     setSaving(true);
 
     try {
-      const saleId = await createSale(db, user?.id, {
+      await createSale(db, {
         saleType,
         debtorId: selectedDebtorId,
         items: cartItems,
       });
 
-      setReceipt({
-        id: saleId,
-        createdAt: new Date().toISOString(),
-        saleType,
-        debtorName: selectedDebtor?.full_name || null,
-        items: cartItems,
-        total,
-      });
+      Alert.alert(
+        "Sale recorded",
+        `Total: ${formatCurrency(total)}`,
+        [
+          {
+            text: "OK",
+            onPress: () => router.replace("/sell"),
+          },
+        ]
+      );
     } catch (error) {
       Alert.alert(
         "Could not complete sale",
@@ -102,36 +97,6 @@ export default function CheckoutScreen() {
       );
     } finally {
       setSaving(false);
-    }
-  }
-
-  function handleReceiptDone() {
-    setReceipt(null);
-    router.replace("/sell");
-  }
-
-  async function handlePrintReceipt() {
-    if (!receipt) return;
-
-    setPrintingReceipt(true);
-
-    try {
-      const receiptHtml = buildReceiptHtml(receipt, user?.storeName);
-
-      if (Platform.OS === "web") {
-        openReceiptPrintDialog(receiptHtml);
-        return;
-      }
-
-      await Print.printAsync({ html: receiptHtml });
-    } catch (error) {
-      console.error("Could not print receipt:", error);
-      Alert.alert(
-        "Could not print receipt",
-        "Please try again."
-      );
-    } finally {
-      setPrintingReceipt(false);
     }
   }
 
@@ -229,9 +194,9 @@ export default function CheckoutScreen() {
 
                   <Text style={styles.itemUnitPrice}>
                     {formatCurrency(
-                      getSalePricing(item.product, item.saleMode).unitPrice
+                      item.product.unit_price
                     )}{" "}
-                    per {getSalePricing(item.product, item.saleMode).label}
+                    each
                   </Text>
                 </View>
               </View>
@@ -239,7 +204,7 @@ export default function CheckoutScreen() {
               <Text style={styles.itemTotal}>
                 {formatCurrency(
                   item.quantity *
-                    getSalePricing(item.product, item.saleMode).unitPrice
+                    item.product.unit_price
                 )}
               </Text>
             </View>
@@ -513,8 +478,6 @@ export default function CheckoutScreen() {
         </View>
       </ScrollView>
 
-      <BottomNav activeTab="sell" />
-
       {/* CONFIRM SALE MODAL */}
       <Modal
         visible={showConfirmModal}
@@ -714,244 +677,8 @@ export default function CheckoutScreen() {
           </View>
         </View>
       </Modal>
-
-      {/* SALE RECEIPT MODAL */}
-      <Modal
-        visible={Boolean(receipt)}
-        transparent
-        animationType="fade"
-        onRequestClose={handleReceiptDone}
-      >
-        <View style={styles.receiptOverlay}>
-          <View style={styles.receiptSheet}>
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.receiptContent}
-            >
-              <View style={styles.receiptSuccessIcon}>
-                <Ionicons
-                  name="checkmark"
-                  size={23}
-                  color={colors.white}
-                />
-              </View>
-
-              <Text style={styles.receiptStatus}>SALE RECORDED</Text>
-              <Text style={styles.receiptStoreName}>
-                {user?.storeName || "My Store"}
-              </Text>
-              <Text style={styles.receiptTitle}>Sales receipt</Text>
-
-              <View style={styles.receiptMeta}>
-                <Text style={styles.receiptMetaText}>
-                  Receipt #{receipt?.id}
-                </Text>
-                <Text style={styles.receiptMetaText}>
-                  {formatReceiptDate(receipt?.createdAt)}
-                </Text>
-              </View>
-
-              <View style={styles.receiptDivider} />
-
-              <View style={styles.receiptItems}>
-                {receipt?.items.map((item) => (
-                  <View key={item.product.id} style={styles.receiptItem}>
-                    <View style={styles.receiptItemInfo}>
-                      <Text style={styles.receiptItemName} numberOfLines={2}>
-                        {item.product.name}
-                      </Text>
-                      <Text style={styles.receiptItemDetail}>
-                        {item.quantity} x {formatCurrency(getSalePricing(item.product, item.saleMode).unitPrice)}
-                      </Text>
-                    </View>
-                    <Text style={styles.receiptItemTotal}>
-                      {formatCurrency(item.quantity * getSalePricing(item.product, item.saleMode).unitPrice)}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-
-              <View style={styles.receiptDivider} />
-
-              <ReceiptRow
-                label="Payment"
-                value={receipt?.saleType === "credit" ? "Utang" : "Cash"}
-              />
-              {receipt?.debtorName ? (
-                <ReceiptRow label="Debtor" value={receipt.debtorName} />
-              ) : null}
-              <View style={styles.receiptTotalRow}>
-                <Text style={styles.receiptTotalLabel}>TOTAL</Text>
-                <Text style={styles.receiptTotalValue}>
-                  {formatCurrency(receipt?.total || 0)}
-                </Text>
-              </View>
-
-              <View style={styles.receiptFooter}>
-                <Ionicons
-                  name="checkmark-circle-outline"
-                  size={16}
-                  color={colors.success}
-                />
-                <Text style={styles.receiptFooterText}>
-                  Inventory has been updated.
-                </Text>
-              </View>
-            </ScrollView>
-
-            <View style={styles.receiptActions}>
-              <Pressable
-                onPress={handlePrintReceipt}
-                disabled={printingReceipt}
-                style={({ pressed }) => [
-                  styles.receiptPrintButton,
-                  pressed &&
-                    !printingReceipt &&
-                    styles.completeButtonPressed,
-                  printingReceipt && styles.completeButtonDisabled,
-                ]}
-              >
-                <Ionicons
-                  name="print-outline"
-                  size={18}
-                  color={colors.navy}
-                />
-                <Text style={styles.receiptPrintText}>
-                  {printingReceipt ? "Printing..." : "Print"}
-                </Text>
-              </Pressable>
-
-              <Pressable
-                onPress={handleReceiptDone}
-                style={({ pressed }) => [
-                  styles.receiptDoneButton,
-                  pressed && styles.completeButtonPressed,
-                ]}
-              >
-                <Text style={styles.receiptDoneText}>Done</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
-}
-
-function buildReceiptHtml(receipt, storeName) {
-  const itemRows = receipt.items
-    .map((item) => {
-      const price = getSalePricing(
-        item.product,
-        item.saleMode
-      ).unitPrice;
-
-      return `
-        <tr>
-          <td>
-            <strong>${escapeReceiptHtml(item.product.name)}</strong><br />
-            <span>${item.quantity} x ${formatCurrency(price)}</span>
-          </td>
-          <td class="amount">${formatCurrency(item.quantity * price)}</td>
-        </tr>`;
-    })
-    .join("");
-  const payment =
-    receipt.saleType === "credit" ? "Utang" : "Cash";
-  const debtorRow = receipt.debtorName
-    ? `<p><span>Debtor</span><strong>${escapeReceiptHtml(receipt.debtorName)}</strong></p>`
-    : "";
-
-  return `
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <title>Receipt #${receipt.id}</title>
-        <style>
-          @page { margin: 12mm; }
-          * { box-sizing: border-box; }
-          body { color: #20242C; font-family: Arial, Helvetica, sans-serif; font-size: 12px; margin: 0; }
-          main { margin: 0 auto; max-width: 360px; }
-          header { border-bottom: 2px solid #1E3A5F; padding-bottom: 12px; text-align: center; }
-          h1 { color: #1E3A5F; font-size: 22px; margin: 0; }
-          .subtitle, .meta, span { color: #6B7280; }
-          .subtitle { margin: 4px 0 0; }
-          .meta { font-size: 10px; line-height: 1.5; margin: 12px 0; text-align: center; }
-          table { border-collapse: collapse; width: 100%; }
-          td { border-bottom: 1px dashed #D7D2C3; padding: 9px 0; vertical-align: top; }
-          td span { font-size: 10px; }
-          .amount { font-weight: bold; padding-left: 12px; text-align: right; white-space: nowrap; }
-          .details { border-bottom: 1px dashed #D7D2C3; padding: 10px 0; }
-          .details p { display: flex; justify-content: space-between; gap: 12px; margin: 5px 0; }
-          .total { color: #1E3A5F; display: flex; font-size: 17px; justify-content: space-between; margin-top: 14px; }
-          footer { color: #6B7280; font-size: 10px; margin-top: 22px; text-align: center; }
-        </style>
-      </head>
-      <body>
-        <main>
-          <header>
-            <h1>${escapeReceiptHtml(storeName || "My Store")}</h1>
-            <p class="subtitle">Sales receipt</p>
-          </header>
-          <p class="meta">Receipt #${receipt.id}<br />${formatReceiptDate(receipt.createdAt)}</p>
-          <table><tbody>${itemRows}</tbody></table>
-          <section class="details">
-            <p><span>Payment</span><strong>${payment}</strong></p>
-            ${debtorRow}
-          </section>
-          <div class="total"><strong>TOTAL</strong><strong>${formatCurrency(receipt.total)}</strong></div>
-          <footer>Thank you for your purchase.</footer>
-        </main>
-      </body>
-    </html>
-  `;
-}
-
-function escapeReceiptHtml(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function openReceiptPrintDialog(html) {
-  const printWindow = globalThis.window?.open("", "_blank");
-
-  if (!printWindow) {
-    Alert.alert(
-      "Print blocked",
-      "Allow pop-ups for this app, then try again."
-    );
-    return;
-  }
-
-  printWindow.document.write(html);
-  printWindow.document.close();
-  printWindow.focus();
-  printWindow.print();
-}
-
-function ReceiptRow({ label, value }) {
-  return (
-    <View style={styles.receiptRow}>
-      <Text style={styles.receiptRowLabel}>{label}</Text>
-      <Text style={styles.receiptRowValue} numberOfLines={1}>{value}</Text>
-    </View>
-  );
-}
-
-function formatReceiptDate(value) {
-  if (!value) return "";
-
-  return new Date(value).toLocaleString("en-PH", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }
 
 function OptionChip({
@@ -1068,8 +795,7 @@ const styles = StyleSheet.create({
   container: {
     padding: spacing.md,
     gap: spacing.md,
-    paddingBottom:
-      bottomNavHeight + spacing.xl + 20,
+    paddingBottom:spacing.lg,
   },
 
   /* INTRO */
@@ -1731,217 +1457,6 @@ const styles = StyleSheet.create({
   completeButtonText: {
     color: colors.navy,
     fontSize: 12,
-    fontWeight: "900",
-  },
-
-  /* SALE RECEIPT */
-  receiptOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(8,18,38,0.68)",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing.md,
-  },
-
-  receiptSheet: {
-    width: "100%",
-    maxWidth: 390,
-    maxHeight: "88%",
-    backgroundColor: colors.white,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: "hidden",
-    shadowColor: colors.navy,
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.22,
-    shadowRadius: 24,
-    elevation: 12,
-  },
-
-  receiptContent: {
-    padding: spacing.lg,
-    paddingBottom: spacing.md,
-  },
-
-  receiptSuccessIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    alignItems: "center",
-    justifyContent: "center",
-    alignSelf: "center",
-    backgroundColor: colors.success,
-    marginBottom: 10,
-  },
-
-  receiptStatus: {
-    color: colors.success,
-    fontSize: 10,
-    fontWeight: "900",
-    letterSpacing: 1.1,
-    textAlign: "center",
-  },
-
-  receiptStoreName: {
-    color: colors.navy,
-    fontSize: 20,
-    fontWeight: "900",
-    textAlign: "center",
-    marginTop: 5,
-  },
-
-  receiptTitle: {
-    color: colors.textMuted,
-    fontSize: 11,
-    textAlign: "center",
-    marginTop: 2,
-  },
-
-  receiptMeta: {
-    alignItems: "center",
-    gap: 3,
-    marginTop: spacing.md,
-  },
-
-  receiptMetaText: {
-    color: colors.textMuted,
-    fontSize: 10,
-  },
-
-  receiptDivider: {
-    borderTopWidth: 1,
-    borderStyle: "dashed",
-    borderColor: colors.border,
-    marginVertical: spacing.md,
-  },
-
-  receiptItems: {
-    gap: 12,
-  },
-
-  receiptItem: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: spacing.sm,
-  },
-
-  receiptItemInfo: {
-    flex: 1,
-    minWidth: 0,
-  },
-
-  receiptItemName: {
-    color: colors.text,
-    fontSize: 12,
-    fontWeight: "800",
-    lineHeight: 17,
-  },
-
-  receiptItemDetail: {
-    color: colors.textMuted,
-    fontSize: 10,
-    marginTop: 2,
-  },
-
-  receiptItemTotal: {
-    color: colors.navy,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-
-  receiptRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.md,
-    marginBottom: 8,
-  },
-
-  receiptRowLabel: {
-    color: colors.textMuted,
-    fontSize: 11,
-  },
-
-  receiptRowValue: {
-    flex: 1,
-    color: colors.navy,
-    fontSize: 11,
-    fontWeight: "800",
-    textAlign: "right",
-  },
-
-  receiptTotalRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: spacing.sm,
-    paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-
-  receiptTotalLabel: {
-    color: colors.navy,
-    fontSize: 13,
-    fontWeight: "900",
-    letterSpacing: 0.8,
-  },
-
-  receiptTotalValue: {
-    color: colors.navy,
-    fontSize: 22,
-    fontWeight: "900",
-  },
-
-  receiptFooter: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 5,
-    marginTop: spacing.lg,
-  },
-
-  receiptFooterText: {
-    color: colors.textMuted,
-    fontSize: 10,
-  },
-
-  receiptActions: {
-    flexDirection: "row",
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-
-  receiptPrintButton: {
-    flex: 1,
-    minHeight: 50,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 6,
-    backgroundColor: colors.cream,
-    borderRightWidth: 1,
-    borderRightColor: colors.border,
-  },
-
-  receiptPrintText: {
-    color: colors.navy,
-    fontSize: 13,
-    fontWeight: "900",
-  },
-
-  receiptDoneButton: {
-    flex: 1,
-    minHeight: 50,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.goldLight,
-  },
-
-  receiptDoneText: {
-    color: colors.navy,
-    fontSize: 13,
     fontWeight: "900",
   },
 });

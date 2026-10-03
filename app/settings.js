@@ -16,7 +16,6 @@ import Card from "@/components/Card";
 import { colors, spacing, radius } from "@/constants/theme";
 import { useAuth } from "@/context/AuthContext";
 import TopHeader from "@/components/TopHeader";
-import BottomNav from "@/components/BottomNav";
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -449,12 +448,6 @@ export default function SettingsScreen() {
           </Text>
         </View>
       </ScrollView>
-
-      {/* =========================
-          BOTTOM NAVIGATION
-      ========================= */}
-
-      <BottomNav />
 
       {/* =========================
           LOGOUT CONFIRMATION MODAL

@@ -20,9 +20,6 @@ import { Ionicons } from "@expo/vector-icons";
 import Card from "@/components/Card";
 import Button from "@/components/Button";
 import EmptyState from "@/components/EmptyState";
-import BottomNav, {
-  bottomNavHeight,
-} from "@/components/BottomNav";
 
 import {
   colors,
@@ -895,8 +892,6 @@ export default function DebtorDetailScreen() {
           </View>
         </View>
       </ScrollView>
-
-      <BottomNav activeTab="debtors" />
     </SafeAreaView>
   );
 }
@@ -1045,10 +1040,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingTop: 14,
     gap: 19,
-    paddingBottom:
-      bottomNavHeight +
-      spacing.xl +
-      50,
+    paddingBottom:spacing.lg,
   },
 
   /* HERO */

@@ -5,7 +5,6 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
 import Button from "@/components/Button";
-import BottomNav, { bottomNavHeight } from "@/components/BottomNav";
 import { colors, spacing, typography } from "@/constants/theme";
 import { getDebtor, updateDebtor } from "@/db/database";
 import { useAuth } from "@/context/AuthContext";
@@ -129,7 +128,6 @@ export default function EditDebtorScreen() {
 
         <Button title="Save changes" onPress={handleSave} loading={saving} />
       </ScrollView>
-      <BottomNav activeTab="debtors" />
     </SafeAreaView>
   );
 }
@@ -144,6 +142,6 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   title: { ...typography.heading },
-  form: { padding: spacing.md, gap: spacing.md, paddingBottom: bottomNavHeight + spacing.xl },
+  form: { padding: spacing.md, gap: spacing.md,paddingBottom:spacing.lg, },
   label: { ...typography.label },
 });

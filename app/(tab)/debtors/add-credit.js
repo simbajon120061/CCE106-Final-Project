@@ -15,7 +15,6 @@ import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
 
 import Button from "@/components/Button";
-import BottomNav, { bottomNavHeight } from "@/components/BottomNav";
 import { colors, spacing, typography, radius } from "@/constants/theme";
 import { formatCurrency } from "@/lib/format";
 import {
@@ -574,8 +573,6 @@ export default function AddCreditScreen() {
           />
         </View>
       </ScrollView>
-
-      <BottomNav activeTab="debtors" />
     </SafeAreaView>
   );
 }
@@ -641,7 +638,7 @@ const styles = StyleSheet.create({
   form: {
     paddingHorizontal: spacing.md,
     paddingTop: 6,
-    paddingBottom: bottomNavHeight + spacing.xl + 20,
+    paddingBottom:spacing.lg,
     gap: 14,
   },
 
@@ -912,7 +909,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     flexShrink: 0,
   },
-
+  
   stockTextGood: { color: "#2E7D32" }, 
   stockTextLow: { color: colors.navy },
   stockTextEmpty: { color: colors.textMuted },

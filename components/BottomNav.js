@@ -17,6 +17,8 @@ export const bottomNavHeight = 0;
 const BAR_HEIGHT = 76;
 
 export default function BottomNav({ state, navigation }) {
+  if (!state || !navigation) return null;
+
   const currentTab = state.routes[state.index].name;
 
   return (
