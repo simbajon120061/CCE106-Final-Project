@@ -58,7 +58,12 @@ export default function DashboardScreen() {
       let active = true;
 
       async function loadDashboard() {
-        const todayIso = new Date().toISOString().slice(0, 10);
+        const now = new Date();
+        const todayIso = [
+          now.getFullYear(),
+          String(now.getMonth() + 1).padStart(2, "0"),
+          String(now.getDate()).padStart(2, "0"),
+        ].join("-");
 
         const [summaryRows, outstanding, lowStock, itemRow] =
           await Promise.all([

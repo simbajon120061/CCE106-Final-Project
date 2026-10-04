@@ -76,15 +76,17 @@ export default function DebtorDetailScreen() {
     return balances;
   }, [transactions]);
 
-  const load = useCallback(async () => {
-    const [d, tx] = await Promise.all([
-      getDebtor(db, user?.id, debtorId),
-      getTransactionsForDebtor(db, user?.id, debtorId),
+const load = useCallback(async () => {
+  if (!debtorId) return;
+
+  const [d, tx] = await Promise.all([
+      getDebtor(db, debtorId),
+      getTransactionsForDebtor(db, debtorId),
     ]);
 
     setDebtor(d);
     setTransactions(tx);
-  }, [db, debtorId, user?.id]);
+  }, [db, debtorId]);
 
   useFocusEffect(
     useCallback(() => {

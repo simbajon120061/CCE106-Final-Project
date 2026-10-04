@@ -9,9 +9,10 @@ import {
   Image,
   ActivityIndicator,
   Modal,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
@@ -25,6 +26,11 @@ import {
 
 import { createDebtor } from "@/db/database";
 import { useAuth } from "@/context/AuthContext";
+import {
+  saveDebtorDraft,
+  loadDebtorDraft,
+  clearDebtorDraft,
+} from "@/lib/debtorDraft";
 
 export default function NewDebtorScreen() {
   const db = useSQLiteContext();
@@ -41,31 +47,83 @@ export default function NewDebtorScreen() {
   const [idPhotoUri, setIdPhotoUri] = useState(null);
   const [saving, setSaving] = useState(false);
 
+  function saveDraftFor(target) {
+    saveDebtorDraft({
+      screen: "new",
+      target,
+      fullName,
+      contact,
+      idNumber,
+      address,
+      notes,
+      creditLimit,
+      profilePhotoUri,
+      idPhotoUri,
+    });
+  }
+
   const profilePhotoHandlers = usePhotoHandlers(
     setProfilePhotoUri,
-    "Profile photo"
+    "Profile photo",
+    () => saveDraftFor("profile")
   );
   const idPhotoHandlers = usePhotoHandlers(
     setIdPhotoUri,
-    "ID photo"
+    "ID photo",
+    () => saveDraftFor("id")
   );
 
-  async function handleSave() {
+  useEffect(() => {
+    const draft = loadDebtorDraft();
+    if (!draft || draft.screen !== "new") return;
+
+    setFullName(draft.fullName ?? "");
+    setContact(draft.contact ?? "");
+    setIdNumber(draft.idNumber ?? "");
+    setAddress(draft.address ?? "");
+    setNotes(draft.notes ?? "");
+    setCreditLimit(draft.creditLimit ?? "");
+    setProfilePhotoUri(draft.profilePhotoUri ?? null);
+    setIdPhotoUri(draft.idPhotoUri ?? null);
+
+    async function recoverPhoto() {
+      if (Platform.OS === "android") {
+        try {
+          const pending = await ImagePicker.getPendingResultAsync();
+          const uri = pending?.find((r) => r?.assets?.[0]?.uri)
+            ?.assets[0].uri;
+
+          console.log("[new] restore target:", draft.target, "photo:", !!uri);
+
+          if (uri) {
+            if (draft.target === "id") setIdPhotoUri(uri);
+            else setProfilePhotoUri(uri);
+          }
+        } catch (error) {
+          console.warn("Could not recover photo", error);
+        }
+      }
+      clearDebtorDraft();
+    }
+
+    recoverPhoto();
+  }, []);
+
+  const handleSave = async () => {
     if (!fullName.trim()) {
-      Alert.alert(
-        "Name required",
-        "Please enter the customer's full name."
-      );
+      Alert.alert("Required", "Please enter the debtor's full name.");
       return;
     }
 
-    setSaving(true);
+    if (!user?.id) {
+      Alert.alert("Error", "No logged-in user found.");
+      return;
+    }
 
     try {
-      const id = await createDebtor(db, user?.id, {
+      const id = await createDebtor(db, user.id, {
         full_name: fullName.trim(),
         contact_number: contact.trim() || null,
-        id_number: idNumber.trim() || null,
         address: address.trim() || null,
         notes: notes.trim() || null,
         credit_limit: Number(creditLimit) || 0,
@@ -73,11 +131,18 @@ export default function NewDebtorScreen() {
         id_photo_uri: idPhotoUri,
       });
 
+      clearDebtorDraft();
+
       router.replace(`/debtors/${id}`);
-    } finally {
-      setSaving(false);
+    } catch (error) {
+      console.error("Failed to create debtor:", error);
+
+      Alert.alert(
+        "Error",
+        "Failed to create debtor. Please try again."
+      );
     }
-  }
+  };
 
   return (
     <SafeAreaView
@@ -349,7 +414,7 @@ export default function NewDebtorScreen() {
    PHOTO HANDLERS
 ========================================================= */
 
-export function usePhotoHandlers(setPhotoUri, photoName) {
+export function usePhotoHandlers(setPhotoUri, photoName, onBeforeLaunch) {
   const [removeModalVisible, setRemoveModalVisible] =
     useState(false);
 
@@ -365,13 +430,17 @@ export function usePhotoHandlers(setPhotoUri, photoName) {
       return;
     }
 
+    onBeforeLaunch?.();
+
     const result =
       await ImagePicker.launchCameraAsync({
         mediaTypes: ["images"],
-        quality: 0.6,
-        allowsEditing: true,
-        aspect: [4, 3],
+        quality: 0.4,
+        allowsEditing: false,
+        exif: false,
       });
+
+    clearDebtorDraft();
 
     if (
       !result.canceled &&
@@ -393,6 +462,8 @@ export function usePhotoHandlers(setPhotoUri, photoName) {
       return;
     }
 
+    onBeforeLaunch?.();
+
     const result =
       await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
@@ -400,6 +471,8 @@ export function usePhotoHandlers(setPhotoUri, photoName) {
         allowsEditing: true,
         aspect: [4, 3],
       });
+
+    clearDebtorDraft();
 
     if (
       !result.canceled &&
@@ -409,6 +482,7 @@ export function usePhotoHandlers(setPhotoUri, photoName) {
     }
   }
 
+  
   function onRemovePhoto() {
     setRemoveModalVisible(true);
   }
@@ -431,7 +505,6 @@ export function usePhotoHandlers(setPhotoUri, photoName) {
     cancelRemovePhoto,
   };
 }
-
 /* =========================================================
    DEBTOR FIELDS
 ========================================================= */
@@ -756,7 +829,7 @@ export function DebtorPhotoPicker({
       ===================================================== */}
 
       <Modal
-        visible={removeModalVisible}
+        visible={removeModalVisible && !!photoUri}
         transparent
         animationType="fade"
         onRequestClose={cancelRemovePhoto}
@@ -2151,5 +2224,3 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
   },
 });
-
-

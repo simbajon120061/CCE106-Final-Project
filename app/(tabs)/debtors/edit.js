@@ -37,7 +37,7 @@ export default function EditDebtorScreen() {
     let active = true;
 
     async function load() {
-      const debtor = await getDebtor(db, user?.id, id);
+      const debtor = await getDebtor(db, Number(id), user?.id);
       if (!active || !debtor) return;
 
       setFullName(debtor.full_name || "");
@@ -64,7 +64,7 @@ export default function EditDebtorScreen() {
 
     setSaving(true);
     try {
-      await updateDebtor(db, user?.id, id, {
+      await updateDebtor(db, Number(id), {
         full_name: fullName.trim(),
         contact_number: contact.trim() || null,
         id_number: idNumber.trim() || null,

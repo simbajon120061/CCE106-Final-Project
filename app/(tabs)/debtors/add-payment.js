@@ -37,7 +37,7 @@ export default function AddPaymentScreen() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    getDebtor(db, user?.id, Number(debtorId)).then(setDebtor);
+    getDebtor(db, Number(debtorId), user?.id).then(setDebtor);
   }, [db, debtorId, user?.id]);
 
   async function handleSave() {
@@ -56,7 +56,8 @@ export default function AddPaymentScreen() {
     setSaving(true);
 
     try {
-      await addPaymentTransaction(db, user?.id, {
+      await addPaymentTransaction(db, {
+        userId: user?.id,
         debtorId: Number(debtorId),
         amount: amt,
         description: description.trim() || null,

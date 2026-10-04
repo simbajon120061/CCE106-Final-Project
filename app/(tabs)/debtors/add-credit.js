@@ -57,7 +57,7 @@ export default function AddCreditScreen() {
 
     Promise.all([
       getProducts(db, user?.id),
-      getDebtor(db, user?.id, Number(debtorId)),
+      getDebtor(db, Number(debtorId), user?.id),
     ]).then(([productRows, debtorRecord]) => {
       if (!active) return;
 
@@ -165,7 +165,8 @@ export default function AddCreditScreen() {
           description: description.trim() || null,
         });
       } else {
-        await addCreditTransaction(db, user?.id, {
+        await addCreditTransaction(db, {
+          userId: user?.id,
           debtorId: Number(debtorId),
           amount: amountNumber,
           description: description.trim() || null,
