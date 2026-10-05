@@ -18,6 +18,8 @@ import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 
+import CameraCapture from "@/components/CameraCapture";
+
 import {
   colors,
   spacing,
@@ -92,8 +94,6 @@ export default function NewDebtorScreen() {
           const pending = await ImagePicker.getPendingResultAsync();
           const uri = pending?.find((r) => r?.assets?.[0]?.uri)
             ?.assets[0].uri;
-
-          console.log("[new] restore target:", draft.target, "photo:", !!uri);
 
           if (uri) {
             if (draft.target === "id") setIdPhotoUri(uri);
@@ -417,37 +417,20 @@ export default function NewDebtorScreen() {
 export function usePhotoHandlers(setPhotoUri, photoName, onBeforeLaunch) {
   const [removeModalVisible, setRemoveModalVisible] =
     useState(false);
+  const [cameraVisible, setCameraVisible] = useState(false);
 
-  async function onTakePhoto() {
-    const permission =
-      await ImagePicker.requestCameraPermissionsAsync();
+  // In-app camera: the app stays open, so Android never restarts it.
+  function onTakePhoto() {
+    setCameraVisible(true);
+  }
 
-    if (!permission.granted) {
-      Alert.alert(
-        "Permission needed",
-        `Camera access is required to take a ${photoName.toLowerCase()}.`
-      );
-      return;
-    }
+  function closeCamera() {
+    setCameraVisible(false);
+  }
 
-    onBeforeLaunch?.();
-
-    const result =
-      await ImagePicker.launchCameraAsync({
-        mediaTypes: ["images"],
-        quality: 0.4,
-        allowsEditing: false,
-        exif: false,
-      });
-
-    clearDebtorDraft();
-
-    if (
-      !result.canceled &&
-      result.assets?.[0]?.uri
-    ) {
-      setPhotoUri(result.assets[0].uri);
-    }
+  function onCameraCaptured(uri) {
+    setPhotoUri(uri);
+    setCameraVisible(false);
   }
 
   async function onPickPhoto() {
@@ -482,7 +465,6 @@ export function usePhotoHandlers(setPhotoUri, photoName, onBeforeLaunch) {
     }
   }
 
-  
   function onRemovePhoto() {
     setRemoveModalVisible(true);
   }
@@ -503,8 +485,12 @@ export function usePhotoHandlers(setPhotoUri, photoName, onBeforeLaunch) {
     removeModalVisible,
     confirmRemovePhoto,
     cancelRemovePhoto,
+    cameraVisible,
+    closeCamera,
+    onCameraCaptured,
   };
 }
+
 /* =========================================================
    DEBTOR FIELDS
 ========================================================= */
@@ -613,6 +599,9 @@ export function DebtorPhotoPicker({
   removeModalVisible,
   confirmRemovePhoto,
   cancelRemovePhoto,
+  cameraVisible,
+  closeCamera,
+  onCameraCaptured,
 }) {
   return (
     <>
@@ -825,11 +814,21 @@ export function DebtorPhotoPicker({
       )}
 
       {/* =====================================================
+          IN-APP CAMERA
+      ===================================================== */}
+
+      <CameraCapture
+        visible={!!cameraVisible}
+        onCapture={onCameraCaptured}
+        onClose={closeCamera}
+      />
+
+      {/* =====================================================
           CUSTOM REMOVE PHOTO MODAL
       ===================================================== */}
 
       <Modal
-        visible={removeModalVisible && !!photoUri}
+        visible={!!removeModalVisible && !!photoUri}
         transparent
         animationType="fade"
         onRequestClose={cancelRemovePhoto}
@@ -1076,7 +1075,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingTop: 14,
     gap: 21,
-    paddingBottom:spacing.lg,
+    paddingBottom: spacing.lg,
   },
 
   /* =====================================================
