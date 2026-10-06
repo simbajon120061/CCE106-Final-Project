@@ -19,7 +19,7 @@ import {
   View,
 } from 'react-native';
 
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView } from "react-native-safe-area-context"; 
 
 import { getUserByPhone } from '@/db/database';
 import { normalizePhoneNumber } from '@/lib/auth';
@@ -349,7 +349,6 @@ export default function LoginScreen() {
             styles.scrollContent
           }
           keyboardShouldPersistTaps="handled"
-          automaticallyAdjustKeyboardInsets
           showsVerticalScrollIndicator={false}
         >
 
@@ -637,7 +636,7 @@ export default function LoginScreen() {
                       styles.forgotText
                     }
                   >
-                    Forgot PIN? Switch account
+                    Switch account
                   </Text>
 
                 </TouchableOpacity>
