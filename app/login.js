@@ -489,8 +489,8 @@ export default function LoginScreen() {
 
                 {/* PIN */}
 
-                <Text style={styles.sectionLabel}>
-                  ENTER YOUR PIN
+                <Text style={styles.pinSectionLabel}>
+                    ENTER YOUR PIN
                 </Text>
 
                 <View
@@ -620,26 +620,7 @@ export default function LoginScreen() {
                   />
                 )}
 
-                <TouchableOpacity
-                  style={
-                    styles.forgotButton
-                  }
-                  onPress={
-                    switchAccount
-                  }
-                  disabled={loading}
-                  activeOpacity={0.7}
-                >
-
-                  <Text
-                    style={
-                      styles.forgotText
-                    }
-                  >
-                    Switch account
-                  </Text>
-
-                </TouchableOpacity>
+                
 
               </>
             ) : (
@@ -944,6 +925,16 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 0.8,
     marginBottom: 10,
+  },
+
+  pinSectionLabel: {
+    color: colors.navy,
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+    marginBottom: 10,
+    textAlign: 'center',
+    alignSelf: 'center',
   },
 
   /* ACCOUNT */
