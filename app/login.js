@@ -10,6 +10,7 @@ import {
   Alert,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -19,7 +20,7 @@ import {
   View,
 } from 'react-native';
 
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { getUserByPhone } from '@/db/database';
 import { normalizePhoneNumber } from '@/lib/auth';
@@ -50,11 +51,16 @@ export default function LoginScreen() {
   const [pin, setPin] = useState('');
   const [loading, setLoading] = useState(false);
 
-  /*
-   * =====================================================
-   * LOAD SAVED PHONE
-   * =====================================================
-   */
+  /* =====================================================
+     LOGIN FAILED MODAL
+  ===================================================== */
+
+  const [loginFailedVisible, setLoginFailedVisible] =
+    useState(false);
+
+  /* =====================================================
+     LOAD SAVED PHONE
+  ===================================================== */
 
   useEffect(() => {
     loadSavedPhone();
@@ -81,21 +87,17 @@ export default function LoginScreen() {
     }
   };
 
-  /*
-   * =====================================================
-   * ACTIVE PHONE
-   * =====================================================
-   */
+  /* =====================================================
+     ACTIVE PHONE
+  ===================================================== */
 
   const activePhone = enteringNewPhone
     ? phoneInput.trim()
     : savedPhone;
 
-  /*
-   * =====================================================
-   * FORMAT PHONE
-   * =====================================================
-   */
+  /* =====================================================
+     FORMAT PHONE
+  ===================================================== */
 
   const formatPhone = (phone) => {
     if (!phone) {
@@ -114,11 +116,9 @@ export default function LoginScreen() {
     return phone;
   };
 
-  /*
-   * =====================================================
-   * LOGIN
-   * =====================================================
-   */
+  /* =====================================================
+     LOGIN
+  ===================================================== */
 
   const submitLogin = async (fullPin) => {
     const normalizedPhone =
@@ -142,41 +142,41 @@ export default function LoginScreen() {
     try {
       setLoading(true);
 
-      /*
-       * GET USER FROM SQLITE
-       */
+      /* =================================================
+         GET USER FROM SQLITE
+      ================================================= */
+
       const user = await getUserByPhone(
         db,
         normalizedPhone
       );
 
-      /*
-       * VERIFY USER + PIN
-       */
+      /* =================================================
+         VERIFY USER + PIN
+      ================================================= */
+
       if (
         !user ||
         user.pin_code !== fullPin
       ) {
-        Alert.alert(
-          'Login Failed',
-          'Incorrect phone number or PIN.'
-        );
-
         setPin('');
+        setLoginFailedVisible(true);
         return;
       }
 
-      /*
-       * SAVE LAST PHONE
-       */
+      /* =================================================
+         SAVE LAST PHONE
+      ================================================= */
+
       await AsyncStorage.setItem(
         'lastPhone',
         normalizedPhone
       );
 
-      /*
-       * SAVE USER TO AUTH CONTEXT
-       */
+      /* =================================================
+         SAVE USER TO AUTH CONTEXT
+      ================================================= */
+
       await login({
         id: user.id,
         phoneNumber: user.phone_number,
@@ -201,20 +201,26 @@ export default function LoginScreen() {
     }
   };
 
-  /*
-   * =====================================================
-   * KEYPAD
-   * =====================================================
-   */
+  /* =====================================================
+     CLOSE LOGIN FAILED MODAL
+  ===================================================== */
+
+  const closeLoginFailedModal = () => {
+    setLoginFailedVisible(false);
+    setPin('');
+  };
+
+  /* =====================================================
+     KEYPAD
+  ===================================================== */
 
   const handleKeyPress = (key) => {
     if (loading) {
       return;
     }
 
-    /*
-     * DELETE
-     */
+    /* DELETE */
+
     if (key === 'del') {
       setPin((current) =>
         current.slice(0, -1)
@@ -223,16 +229,14 @@ export default function LoginScreen() {
       return;
     }
 
-    /*
-     * EMPTY KEY
-     */
+    /* EMPTY KEY */
+
     if (!key) {
       return;
     }
 
-    /*
-     * MAX 4 DIGITS
-     */
+    /* MAX 4 DIGITS */
+
     if (pin.length >= PIN_LENGTH) {
       return;
     }
@@ -241,9 +245,8 @@ export default function LoginScreen() {
 
     setPin(nextPin);
 
-    /*
-     * AUTO LOGIN AFTER 4 DIGITS
-     */
+    /* AUTO LOGIN AFTER 4 DIGITS */
+
     if (nextPin.length === PIN_LENGTH) {
       setTimeout(() => {
         submitLogin(nextPin);
@@ -251,11 +254,9 @@ export default function LoginScreen() {
     }
   };
 
-  /*
-   * =====================================================
-   * SWITCH ACCOUNT
-   * =====================================================
-   */
+  /* =====================================================
+     SWITCH ACCOUNT
+  ===================================================== */
 
   const switchAccount = async () => {
     if (loading) {
@@ -279,11 +280,9 @@ export default function LoginScreen() {
     setEnteringNewPhone(true);
   };
 
-  /*
-   * =====================================================
-   * CONTINUE WITH NEW PHONE
-   * =====================================================
-   */
+  /* =====================================================
+     CONTINUE WITH NEW PHONE
+  ===================================================== */
 
   const continueWithPhone = async () => {
     const normalizedPhone =
@@ -316,21 +315,17 @@ export default function LoginScreen() {
     }
   };
 
-  /*
-   * =====================================================
-   * SIGN UP
-   * =====================================================
-   */
+  /* =====================================================
+     SIGN UP
+  ===================================================== */
 
   const goToSignup = () => {
     router.push('/signup');
   };
 
-  /*
-   * =====================================================
-   * UI
-   * =====================================================
-   */
+  /* =====================================================
+     UI
+  ===================================================== */
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -349,7 +344,6 @@ export default function LoginScreen() {
             styles.scrollContent
           }
           keyboardShouldPersistTaps="handled"
-          automaticallyAdjustKeyboardInsets
           showsVerticalScrollIndicator={false}
         >
 
@@ -490,7 +484,7 @@ export default function LoginScreen() {
 
                 {/* PIN */}
 
-                <Text style={styles.sectionLabel}>
+                <Text style={styles.pinSectionLabel}>
                   ENTER YOUR PIN
                 </Text>
 
@@ -620,27 +614,6 @@ export default function LoginScreen() {
                     }
                   />
                 )}
-
-                <TouchableOpacity
-                  style={
-                    styles.forgotButton
-                  }
-                  onPress={
-                    switchAccount
-                  }
-                  disabled={loading}
-                  activeOpacity={0.7}
-                >
-
-                  <Text
-                    style={
-                      styles.forgotText
-                    }
-                  >
-                    Forgot PIN? Switch account
-                  </Text>
-
-                </TouchableOpacity>
 
               </>
             ) : (
@@ -803,6 +776,208 @@ export default function LoginScreen() {
 
       </KeyboardAvoidingView>
 
+
+      {/* =====================================================
+          LOGIN FAILED MODAL
+      ===================================================== */}
+
+      <Modal
+        visible={loginFailedVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={
+          closeLoginFailedModal
+        }
+      >
+
+        <View
+          style={
+            styles.loginFailedOverlay
+          }
+        >
+
+          <View
+            style={
+              styles.loginFailedModal
+            }
+          >
+
+            {/* WARNING ICON */}
+
+            <View
+              style={
+                styles.loginFailedIconOuter
+              }
+            >
+
+              <View
+                style={
+                  styles.loginFailedIconInner
+                }
+              >
+
+                <Text
+                  style={
+                    styles.loginFailedIcon
+                  }
+                >
+                  !
+                </Text>
+
+              </View>
+
+            </View>
+
+            {/* TITLE */}
+
+            <Text
+              style={
+                styles.loginFailedTitle
+              }
+            >
+              Login Failed
+            </Text>
+
+            {/* MAIN MESSAGE */}
+
+            <Text
+              style={
+                styles.loginFailedSubtitle
+              }
+            >
+              Incorrect phone number or PIN.
+            </Text>
+
+            {/* ERROR CARD */}
+
+            <View
+              style={
+                styles.loginFailedCard
+              }
+            >
+
+              <View
+                style={
+                  styles.loginFailedCardIcon
+                }
+              >
+
+                <Text
+                  style={
+                    styles.loginFailedCardIconText
+                  }
+                >
+                  !
+                </Text>
+
+              </View>
+
+              <View
+                style={
+                  styles.loginFailedCardContent
+                }
+              >
+
+                <Text
+                  style={
+                    styles.loginFailedCardTitle
+                  }
+                >
+                  Incorrect phone number or PIN
+                </Text>
+
+                <Text
+                  style={
+                    styles.loginFailedCardText
+                  }
+                >
+                  Please check your phone number
+                  and PIN, then try again.
+                </Text>
+
+              </View>
+
+            </View>
+
+            {/* INFORMATION */}
+
+            <View
+              style={
+                styles.loginFailedInfoBox
+              }
+            >
+
+              <View
+                style={
+                  styles.loginFailedInfoIcon
+                }
+              >
+
+                <Text
+                  style={
+                    styles.loginFailedInfoIconText
+                  }
+                >
+                  i
+                </Text>
+
+              </View>
+
+              <Text
+                style={
+                  styles.loginFailedInfoText
+                }
+              >
+                Make sure you are using the phone
+                number registered to your account.
+              </Text>
+
+            </View>
+
+            {/* TRY AGAIN BUTTON */}
+
+            <TouchableOpacity
+              style={
+                styles.loginFailedButton
+              }
+              onPress={
+                closeLoginFailedModal
+              }
+              activeOpacity={0.85}
+            >
+
+              <Text
+                style={
+                  styles.loginFailedButtonText
+                }
+              >
+                Try Again
+              </Text>
+
+              <View
+                style={
+                  styles.loginFailedButtonIcon
+                }
+              >
+
+                <Text
+                  style={
+                    styles.loginFailedButtonIconText
+                  }
+                >
+                  ✓
+                </Text>
+
+              </View>
+
+            </TouchableOpacity>
+
+          </View>
+
+        </View>
+
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -831,7 +1006,9 @@ const styles = StyleSheet.create({
     paddingBottom: 30,
   },
 
-  /* BRAND */
+  /* =====================================================
+     BRAND
+  ===================================================== */
 
   brandSection: {
     alignItems: 'center',
@@ -888,7 +1065,9 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
 
-  /* HEADER */
+  /* =====================================================
+     HEADER
+  ===================================================== */
 
   header: {
     alignItems: 'center',
@@ -918,7 +1097,9 @@ const styles = StyleSheet.create({
     maxWidth: 290,
   },
 
-  /* LOGIN CARD */
+  /* =====================================================
+     LOGIN CARD
+  ===================================================== */
 
   loginCard: {
     backgroundColor: colors.white,
@@ -947,7 +1128,19 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
 
-  /* ACCOUNT */
+  pinSectionLabel: {
+    color: colors.navy,
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+    marginBottom: 10,
+    textAlign: 'center',
+    alignSelf: 'center',
+  },
+
+  /* =====================================================
+     ACCOUNT
+  ===================================================== */
 
   accountContainer: {
     flexDirection: 'row',
@@ -1007,7 +1200,9 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
   },
 
-  /* PIN */
+  /* =====================================================
+     PIN
+  ===================================================== */
 
   pinContainer: {
     flexDirection: 'row',
@@ -1043,7 +1238,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
   },
 
-  /* KEYPAD */
+  /* =====================================================
+     KEYPAD
+  ===================================================== */
 
   keypadContainer: {
     alignItems: 'center',
@@ -1117,7 +1314,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  /* NEW PHONE */
+  /* =====================================================
+     NEW PHONE
+  ===================================================== */
 
   inputContainer: {
     height: 52,
@@ -1202,7 +1401,9 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  /* BOTTOM */
+  /* =====================================================
+     BOTTOM
+  ===================================================== */
 
   bottomContainer: {
     flexDirection: 'row',
@@ -1230,4 +1431,275 @@ const styles = StyleSheet.create({
     fontSize: 10,
     marginTop: 21,
   },
+
+  /* =====================================================
+     LOGIN FAILED MODAL
+  ===================================================== */
+
+  loginFailedOverlay: {
+    flex: 1,
+
+    backgroundColor: 'rgba(10, 25, 47, 0.78)',
+
+    alignItems: 'center',
+    justifyContent: 'center',
+
+    paddingHorizontal: 20,
+  },
+
+  loginFailedModal: {
+    width: '100%',
+    maxWidth: 430,
+
+    backgroundColor: colors.white,
+
+    borderRadius: 28,
+
+    paddingHorizontal: 20,
+    paddingTop: 25,
+    paddingBottom: 20,
+
+    alignItems: 'center',
+
+    borderWidth: 1,
+    borderColor: '#FFFFFF',
+
+    shadowColor: colors.navy,
+    shadowOffset: {
+      width: 0,
+      height: 14,
+    },
+    shadowOpacity: 0.30,
+    shadowRadius: 28,
+
+    elevation: 18,
+  },
+
+  loginFailedIconOuter: {
+    width: 84,
+    height: 84,
+
+    borderRadius: 28,
+
+    backgroundColor: '#FFF0F0',
+
+    alignItems: 'center',
+    justifyContent: 'center',
+
+    marginBottom: 14,
+
+    borderWidth: 1,
+    borderColor: '#F3CACA',
+  },
+
+  loginFailedIconInner: {
+    width: 60,
+    height: 60,
+
+    borderRadius: 20,
+
+    backgroundColor: '#FFE0E0',
+
+    alignItems: 'center',
+    justifyContent: 'center',
+
+    borderWidth: 1,
+    borderColor: '#F0B8B8',
+  },
+
+  loginFailedIcon: {
+    color: '#C62828',
+
+    fontSize: 32,
+    fontWeight: '900',
+
+    textAlign: 'center',
+  },
+
+  loginFailedTitle: {
+    color: colors.navy,
+
+    fontSize: 25,
+    fontWeight: '900',
+
+    textAlign: 'center',
+
+    marginBottom: 8,
+  },
+
+  loginFailedSubtitle: {
+    color: colors.textMuted,
+
+    fontSize: 14,
+    lineHeight: 20,
+
+    textAlign: 'center',
+
+    paddingHorizontal: 5,
+
+    marginBottom: 17,
+  },
+
+  loginFailedCard: {
+    width: '100%',
+
+    flexDirection: 'row',
+    alignItems: 'center',
+
+    backgroundColor: '#FFF5F5',
+
+    borderWidth: 1,
+    borderColor: '#F1D2D2',
+
+    borderRadius: 17,
+
+    padding: 13,
+
+    marginBottom: 12,
+  },
+
+  loginFailedCardIcon: {
+    width: 46,
+    height: 46,
+
+    borderRadius: 14,
+
+    backgroundColor: '#FFE2E2',
+
+    alignItems: 'center',
+    justifyContent: 'center',
+
+    marginRight: 10,
+  },
+
+  loginFailedCardIconText: {
+    color: '#C62828',
+
+    fontSize: 22,
+    fontWeight: '900',
+  },
+
+  loginFailedCardContent: {
+    flex: 1,
+  },
+
+  loginFailedCardTitle: {
+    color: '#9E2525',
+
+    fontSize: 12,
+    fontWeight: '900',
+
+    marginBottom: 3,
+  },
+
+  loginFailedCardText: {
+    color: colors.textMuted,
+
+    fontSize: 11.5,
+    lineHeight: 17,
+  },
+
+  loginFailedInfoBox: {
+    width: '100%',
+
+    flexDirection: 'row',
+    alignItems: 'center',
+
+    backgroundColor: '#F8F6EE',
+
+    borderWidth: 1,
+    borderColor: colors.border,
+
+    borderRadius: 15,
+
+    padding: 12,
+
+    marginBottom: 17,
+  },
+
+  loginFailedInfoIcon: {
+    width: 30,
+    height: 30,
+
+    borderRadius: 9,
+
+    backgroundColor: colors.cream,
+
+    alignItems: 'center',
+    justifyContent: 'center',
+
+    marginRight: 9,
+  },
+
+  loginFailedInfoIconText: {
+    color: colors.navy,
+
+    fontSize: 16,
+    fontWeight: '900',
+  },
+
+  loginFailedInfoText: {
+    flex: 1,
+
+    color: colors.textMuted,
+
+    fontSize: 11.5,
+    lineHeight: 17,
+  },
+
+  loginFailedButton: {
+    width: '100%',
+
+    minHeight: 53,
+
+    borderRadius: 17,
+
+    backgroundColor: colors.navy,
+
+    flexDirection: 'row',
+
+    alignItems: 'center',
+    justifyContent: 'center',
+
+    gap: 9,
+
+    shadowColor: colors.navy,
+
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+
+    shadowOpacity: 0.20,
+    shadowRadius: 9,
+
+    elevation: 5,
+  },
+
+  loginFailedButtonText: {
+    color: colors.white,
+
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  loginFailedButtonIcon: {
+    width: 27,
+    height: 27,
+
+    borderRadius: 9,
+
+    backgroundColor: colors.goldLight,
+
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  loginFailedButtonIconText: {
+    color: colors.navy,
+
+    fontSize: 15,
+    fontWeight: '900',
+  },
+
 });

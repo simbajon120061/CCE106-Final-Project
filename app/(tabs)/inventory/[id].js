@@ -17,9 +17,6 @@ import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
 
 import Button from "@/components/Button";
-import BottomNav, {
-  bottomNavHeight,
-} from "@/components/BottomNav";
 import UnitDropdown from "@/components/UnitDropdown";
 import {
   colors,
@@ -588,8 +585,6 @@ export default function EditProductScreen() {
 
         <View style={styles.bottomSpace} />
       </ScrollView>
-
-      <BottomNav activeTab="inventory" />
     </SafeAreaView>
   );
 }
@@ -694,8 +689,7 @@ const styles = StyleSheet.create({
   form: {
     padding: spacing.md,
     paddingTop: spacing.md,
-    paddingBottom:
-      bottomNavHeight + 105,
+    paddingBottom:spacing.lg,
     gap: spacing.lg,
   },
 

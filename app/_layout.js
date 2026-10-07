@@ -6,6 +6,7 @@ import { View, ActivityIndicator } from "react-native";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { migrateDbIfNeeded } from "@/db/database";
 import { colors } from "@/constants/theme";
+import { loadDebtorDraft } from "@/lib/debtorDraft";
 
 function InitialLayout() {
   const { user, isLoading } = useAuth();
@@ -49,8 +50,8 @@ function InitialLayout() {
     const isWelcomeScreen =
       segments.length === 0 || segments[0] === "index";
 
-    if (user && (inAuthGroup || isWelcomeScreen)) {
-      router.replace("/home/dashboard");
+  if (user && (inAuthGroup || isWelcomeScreen)) {
+    router.replace("/home/dashboard");
     } else if (!user && !inAuthGroup && !isWelcomeScreen) {
       router.replace(hasRegisteredUser ? "/login" : "/signup");
     }

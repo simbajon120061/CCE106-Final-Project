@@ -6,7 +6,6 @@ import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, typography, radius } from "@/constants/theme";
 import { useAuth } from "@/context/AuthContext";
-import BottomNav, { bottomNavHeight } from "@/components/BottomNav";
 import TopHeader from "@/components/TopHeader";
 import { formatCurrency } from "@/lib/format";
 import {
@@ -59,7 +58,12 @@ export default function DashboardScreen() {
       let active = true;
 
       async function loadDashboard() {
-        const todayIso = new Date().toISOString().slice(0, 10);
+        const now = new Date();
+        const todayIso = [
+          now.getFullYear(),
+          String(now.getMonth() + 1).padStart(2, "0"),
+          String(now.getDate()).padStart(2, "0"),
+        ].join("-");
 
         const [summaryRows, outstanding, lowStock, itemRow] =
           await Promise.all([
@@ -308,8 +312,6 @@ export default function DashboardScreen() {
           <View style={styles.brandLine} />
         </View>
       </ScrollView>
-
-      <BottomNav activeTab="home" />
     </SafeAreaView>
   );
 }
@@ -493,7 +495,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingHorizontal: spacing.md,
     paddingTop: spacing.md,
-    paddingBottom: bottomNavHeight + spacing.xl + 10,
+    paddingBottom: spacing.lg,
     gap: spacing.md,
   },
 

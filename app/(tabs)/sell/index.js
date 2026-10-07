@@ -14,7 +14,6 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
 import EmptyState from "@/components/EmptyState";
-import BottomNav, { bottomNavHeight } from "@/components/BottomNav";
 import TopHeader from "@/components/TopHeader";
 import { colors, spacing, radius } from "@/constants/theme";
 import { formatCurrency } from "@/lib/format";
@@ -29,20 +28,29 @@ export default function SellScreen() {
   const [products, setProducts] = useState([]);
   const [query, setQuery] = useState("");
   const [cart, setCart] = useState({});
+    const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(
     async (q) => {
-      const rows = await getProducts(db, user?.id, q?.trim() || undefined);
+      if (!user?.id) return;
+
+      const rows = await getProducts(
+        db,
+        user.id,
+        q?.trim() || undefined
+      );
       setProducts(rows);
+      setLoaded(true);
     },
     [db, user?.id]
   );
 
   useFocusEffect(
     useCallback(() => {
-      load(query);
+      load("");
+      setQuery("");
       setCart({});
-    }, [load, query])
+    }, [load])
   );
 
   function addToCart(product, saleMode = "package") {
@@ -218,11 +226,13 @@ export default function SellScreen() {
           ) : null
         }
         ListEmptyComponent={
-          <EmptyState
-            icon="cart-outline"
-            title="No products to sell"
-            subtitle="Add products to inventory first."
-          />
+          loaded ? (
+            <EmptyState
+              icon="cart-outline"
+              title="No products to sell"
+              subtitle="Add products to inventory first."
+            />
+          ) : null
         }
         renderItem={({ item }) => {
           const inCart = cart[item.id]?.quantity || 0;
@@ -443,8 +453,6 @@ export default function SellScreen() {
           </View>
         </Pressable>
       )}
-
-      <BottomNav activeTab="sell" />
     </SafeAreaView>
   );
 }
@@ -500,8 +508,7 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
-    paddingBottom:
-      bottomNavHeight + 100,
+    paddingBottom: 100,
     flexGrow: 1,
   },
 
@@ -757,7 +764,7 @@ qtyText: {
     position: "absolute",
     left: spacing.md,
     right: spacing.md,
-    bottom: bottomNavHeight + spacing.sm,
+    bottom: spacing.sm,
     minHeight: 66,
     borderRadius: radius.md,
     backgroundColor: colors.navy,

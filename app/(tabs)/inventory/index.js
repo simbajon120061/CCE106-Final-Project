@@ -1,3 +1,4 @@
+// inventory/index.js
 import {
   View,
   Text,
@@ -8,12 +9,10 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useState, useCallback, useMemo } from "react";
-import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
-
 import EmptyState from "@/components/EmptyState";
-import BottomNav, { bottomNavHeight } from "@/components/BottomNav";
 import TopHeader from "@/components/TopHeader";
 import {
   colors,
@@ -21,30 +20,26 @@ import {
   radius,
 } from "@/constants/theme";
 import { formatCurrency } from "@/lib/format";
-import { formatProductUnit } from "@/constants/productUnits";
-import { formatStockQuantity } from "@/lib/inventory";
 import { getProducts } from "@/db/database";
 import { useAuth } from "@/context/AuthContext";
 
 export default function InventoryScreen() {
   const db = useSQLiteContext();
   const router = useRouter();
-  const { filter } = useLocalSearchParams();
   const { user } = useAuth();
 
   const [products, setProducts] = useState([]);
   const [query, setQuery] = useState("");
   const [stockFilter, setStockFilter] = useState("all");
-  const requestedFilter = Array.isArray(filter) ? filter[0] : filter;
-  const activeStockFilter = ["low", "out"].includes(requestedFilter)
-    ? requestedFilter
-    : stockFilter;
 
   const load = useCallback(
     async (q) => {
+      if (!user?.id) return;
+
       const rows = await getProducts(
-        db, user?.id,
-        q.trim() || undefined
+        db,
+        user.id,
+        q?.trim() || undefined
       );
       setProducts(rows);
     },
@@ -53,8 +48,8 @@ export default function InventoryScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      load(["low", "out"].includes(requestedFilter) ? "" : query);
-    }, [load, query, requestedFilter])
+      load(query);
+    }, [load, query])
   );
 
   const filteredProducts = useMemo(() => {
@@ -65,28 +60,21 @@ export default function InventoryScreen() {
       const threshold =
         Number(product.low_stock_threshold) || 0;
 
-      if (activeStockFilter === "available") {
+      if (stockFilter === "available") {
         return stock > threshold;
       }
 
-      if (activeStockFilter === "low") {
+      if (stockFilter === "low") {
         return stock > 0 && stock <= threshold;
       }
 
-      if (activeStockFilter === "out") {
+      if (stockFilter === "out") {
         return stock <= 0;
       }
 
       return true;
     });
-  }, [products, activeStockFilter]);
-
-  function handleStockFilterChange(nextFilter) {
-    setStockFilter(nextFilter);
-    if (requestedFilter) {
-      router.setParams({ filter: undefined });
-    }
-  }
+  }, [products, stockFilter]);
 
   return (
     <SafeAreaView
@@ -175,9 +163,9 @@ export default function InventoryScreen() {
           <FilterChip
             icon="apps-outline"
             label="All"
-            active={activeStockFilter === "all"}
+            active={stockFilter === "all"}
             onPress={() =>
-              handleStockFilterChange("all")
+              setStockFilter("all")
             }
           />
 
@@ -185,28 +173,28 @@ export default function InventoryScreen() {
             icon="checkmark-circle-outline"
             label="Available"
             active={
-              activeStockFilter === "available"
+              stockFilter === "available"
             }
             onPress={() =>
-              handleStockFilterChange("available")
+              setStockFilter("available")
             }
           />
 
           <FilterChip
             icon="warning-outline"
             label="Low"
-            active={activeStockFilter === "low"}
+            active={stockFilter === "low"}
             onPress={() =>
-              handleStockFilterChange("low")
+              setStockFilter("low")
             }
           />
 
           <FilterChip
             icon="close-circle-outline"
             label="Out"
-            active={activeStockFilter === "out"}
+            active={stockFilter === "out"}
             onPress={() =>
-              handleStockFilterChange("out")
+              setStockFilter("out")
             }
           />
         </View>
@@ -350,20 +338,6 @@ export default function InventoryScreen() {
                   </View>
                 ) : null}
 
-                {item.measurement_value != null ? (
-                  <View style={styles.categoryRow}>
-                    <Ionicons
-                      name="resize-outline"
-                      size={12}
-                      color={colors.textMuted}
-                    />
-
-                    <Text style={styles.category}>
-                      {item.measurement_value} {formatProductUnit(item.unit)}
-                    </Text>
-                  </View>
-                ) : null}
-
                 <View
                   style={styles.productBottom}
                 >
@@ -436,7 +410,10 @@ export default function InventoryScreen() {
                           },
                         ]}
                       >
-                        {formatStockQuantity(stock, item.unit)}
+                        {stock}{" "}
+                        {stock === 1
+                          ? "item"
+                          : "items"}
                       </Text>
                     </View>
                   </View>
@@ -473,8 +450,6 @@ export default function InventoryScreen() {
           color={colors.white}
         />
       </Pressable>
-
-      <BottomNav activeTab="inventory" />
     </SafeAreaView>
   );
 }
@@ -678,8 +653,7 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: spacing.md,
     paddingTop: 0,
-    paddingBottom:
-      bottomNavHeight + 105,
+    paddingBottom: 100,
     flexGrow: 1,
   },
 
@@ -887,10 +861,9 @@ const styles = StyleSheet.create({
   floatingAddBtn: {
     position: "absolute",
     right: spacing.md,
-    bottom:
-      bottomNavHeight + spacing.md,
-    width: 62,
-    height: 62,
+    bottom: spacing.md,
+    width: 58,
+    height: 58,
     borderRadius: radius.full,
     backgroundColor: colors.navy,
     alignItems: "center",

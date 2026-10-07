@@ -20,7 +20,6 @@ import * as Sharing from "expo-sharing";
 import Card from "@/components/Card";
 import Button from "@/components/Button";
 import EmptyState from "@/components/EmptyState";
-import BottomNav, { bottomNavHeight } from "@/components/BottomNav";
 import TopHeader from "@/components/TopHeader";
 
 import {
@@ -1526,8 +1525,6 @@ export default function ReportsScreen() {
           </>
         )}
       </ScrollView>
-
-      <BottomNav activeTab="reports" />
     </SafeAreaView>
   );
 }
@@ -2508,19 +2505,10 @@ const styles =
     /* ---------------- SCROLL CONTENT ---------------- */
 
     container: {
-      paddingHorizontal:
-        spacing.md,
-
-      paddingTop:
-        spacing.sm,
-
-      paddingBottom:
-        bottomNavHeight +
-        spacing.xl +
-        20,
-
-      gap:
-        spacing.md,
+      paddingHorizontal:spacing.md,
+      paddingTop:spacing.sm,
+      paddingBottom:spacing.lg,
+      gap:spacing.md,
     },
 
     /* ---------------- SECTION HEADER ---------------- */

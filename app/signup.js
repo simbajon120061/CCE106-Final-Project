@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { useState } from 'react';
 
+
 import {
   Image,
   KeyboardAvoidingView,
@@ -13,6 +14,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 import { useSQLiteContext } from 'expo-sqlite';
 
@@ -32,6 +34,9 @@ export default function SignupScreen() {
 
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
+
+  const [showPin, setShowPin] = useState(false);
+  const [showConfirmPin, setShowConfirmPin] = useState(false);
 
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -414,25 +419,38 @@ export default function SignupScreen() {
               4-digit PIN
             </Text>
 
-            <TextInput
-              style={[
-                styles.input,
-                styles.pinInput,
-              ]}
-              placeholder="••••"
-              placeholderTextColor="#AAA79E"
-              value={pin}
-              onChangeText={(value) =>
-                handlePinChange(
-                  value,
-                  setPin
-                )
-              }
-              keyboardType="number-pad"
-              secureTextEntry
-              maxLength={4}
-              editable={!loading}
-            />
+            <View style={styles.pinInputContainer}>
+              <TextInput
+                style={[
+                  styles.input,
+                  styles.pinInput,
+                  styles.pinInputWithEye,
+                ]}
+                placeholder="••••"
+                placeholderTextColor="#AAA79E"
+                value={pin}
+                onChangeText={(value) =>
+                  handlePinChange(value, setPin)
+                }
+                keyboardType="number-pad"
+                secureTextEntry={!showPin}
+                maxLength={4}
+                editable={!loading}
+              />
+
+              <TouchableOpacity
+                  style={styles.eyeButton}
+                  onPress={() => setShowPin(!showPin)}
+                  disabled={loading}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name={showPin ? 'eye-off-outline' : 'eye-outline'}
+                    size={21}
+                    color={colors.textMuted}
+                  />
+              </TouchableOpacity>
+            </View>
 
             <Text style={styles.helperText}>
               Use a PIN that you can easily remember.
@@ -450,25 +468,44 @@ export default function SignupScreen() {
               Confirm PIN
             </Text>
 
-            <TextInput
-              style={[
-                styles.input,
-                styles.pinInput,
-              ]}
-              placeholder="••••"
-              placeholderTextColor="#AAA79E"
-              value={confirmPin}
-              onChangeText={(value) =>
-                handlePinChange(
-                  value,
-                  setConfirmPin
-                )
-              }
-              keyboardType="number-pad"
-              secureTextEntry
-              maxLength={4}
-              editable={!loading}
-            />
+            <View style={styles.pinInputContainer}>
+              <TextInput
+                style={[
+                  styles.input,
+                  styles.pinInput,
+                  styles.pinInputWithEye,
+                ]}
+                placeholder="••••"
+                placeholderTextColor="#AAA79E"
+                value={confirmPin}
+                onChangeText={(value) =>
+                  handlePinChange(value, setConfirmPin)
+                }
+                keyboardType="number-pad"
+                secureTextEntry={!showConfirmPin}
+                maxLength={4}
+                editable={!loading}
+              />
+
+              <TouchableOpacity
+                style={styles.eyeButton}
+                onPress={() =>
+                  setShowConfirmPin(!showConfirmPin)
+                }
+                disabled={loading}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={
+                    showConfirmPin
+                      ? 'eye-off-outline'
+                      : 'eye-outline'
+                  }
+                  size={21}
+                  color={colors.textMuted}
+                />
+              </TouchableOpacity>
+            </View>
 
           </View>
 
@@ -749,6 +786,24 @@ const styles = StyleSheet.create({
   pinInput: {
     letterSpacing: 7,
     fontWeight: '800',
+  },
+
+  pinInputContainer: {
+    position: 'relative',
+    justifyContent: 'center',
+  },
+
+  pinInputWithEye: {
+    paddingRight: 50,
+  },
+
+  eyeButton: {
+    position: 'absolute',
+    right: 12,
+    height: 51,
+    width: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   helperText: {

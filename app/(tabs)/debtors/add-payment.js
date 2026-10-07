@@ -14,7 +14,6 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
 import Button from "@/components/Button";
-import BottomNav, { bottomNavHeight } from "@/components/BottomNav";
 import { colors, spacing, typography, radius } from "@/constants/theme";
 import { formatCurrency } from "@/lib/format";
 import { addPaymentTransaction, getDebtor } from "@/db/database";
@@ -38,7 +37,7 @@ export default function AddPaymentScreen() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    getDebtor(db, user?.id, Number(debtorId)).then(setDebtor);
+    getDebtor(db, Number(debtorId), user?.id).then(setDebtor);
   }, [db, debtorId, user?.id]);
 
   async function handleSave() {
@@ -57,7 +56,8 @@ export default function AddPaymentScreen() {
     setSaving(true);
 
     try {
-      await addPaymentTransaction(db, user?.id, {
+      await addPaymentTransaction(db, {
+        userId: user?.id,
         debtorId: Number(debtorId),
         amount: amt,
         description: description.trim() || null,
@@ -410,8 +410,6 @@ export default function AddPaymentScreen() {
           </Pressable>
         </View>
       </ScrollView>
-
-      <BottomNav activeTab="debtors" />
     </SafeAreaView>
   );
 }
@@ -567,7 +565,7 @@ const styles = StyleSheet.create({
   form: {
     padding: spacing.md,
     gap: spacing.md,
-    paddingBottom: bottomNavHeight + spacing.xl + 20,
+    paddingBottom:spacing.lg,
   },
 
   /* INTRO */
