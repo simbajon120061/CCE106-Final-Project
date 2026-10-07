@@ -6,20 +6,29 @@ import {
   Pressable,
   Alert,
   Image,
+  Modal,
+  ActivityIndicator,
 } from "react-native";
+
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useState, useCallback, useMemo } from "react";
+
+import {
+  useState,
+  useCallback,
+  useMemo,
+} from "react";
+
 import {
   useFocusEffect,
   useLocalSearchParams,
   useRouter,
 } from "expo-router";
+
 import { useSQLiteContext } from "expo-sqlite";
+
 import { Ionicons } from "@expo/vector-icons";
 
 import Card from "@/components/Card";
-import Button from "@/components/Button";
-import EmptyState from "@/components/EmptyState";
 
 import {
   colors,
@@ -36,24 +45,96 @@ import {
 import {
   getDebtor,
   getTransactionsForDebtor,
+  addCreditTransaction,
+  addPaymentTransaction,
   deleteTransaction,
   deleteDebtor,
 } from "@/db/database";
+
 import { useAuth } from "@/context/AuthContext";
 
 export default function DebtorDetailScreen() {
   const { id } = useLocalSearchParams();
+
   const debtorId = Number(id);
 
   const db = useSQLiteContext();
+
   const router = useRouter();
+
   const { user } = useAuth();
 
   const [debtor, setDebtor] = useState(null);
+
   const [transactions, setTransactions] = useState([]);
+
+  /* =====================================================
+     DELETE MODALS
+  ===================================================== */
+
+  const [deleteModalVisible, setDeleteModalVisible] =
+    useState(false);
+
+  const [debtWarningVisible, setDebtWarningVisible] =
+    useState(false);
+
+  const [deleting, setDeleting] = useState(false);
+
+  /* =====================================================
+     LOAD DEBTOR
+  ===================================================== */
+
+  const load = useCallback(async () => {
+    if (!debtorId) return;
+
+    try {
+      const [d, tx] = await Promise.all([
+        getDebtor(
+          db,
+          debtorId,
+          user?.id
+        ),
+
+        getTransactionsForDebtor(
+          db,
+          debtorId,
+          user?.id
+        ),
+      ]);
+
+      setDebtor(d);
+
+      setTransactions(tx || []);
+    } catch (error) {
+      console.error(
+        "Load debtor error:",
+        error
+      );
+
+      Alert.alert(
+        "Error",
+        "Unable to load debtor information."
+      );
+    }
+  }, [
+    db,
+    debtorId,
+    user?.id,
+  ]);
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
+
+  /* =====================================================
+     RUNNING BALANCES
+  ===================================================== */
 
   const runningBalances = useMemo(() => {
     const balances = new Map();
+
     let running = 0;
 
     [...transactions]
@@ -67,32 +148,21 @@ export default function DebtorDetailScreen() {
       .forEach((tx) => {
         running +=
           tx.type === "credit"
-            ? tx.amount
-            : -tx.amount;
+            ? Number(tx.amount)
+            : -Number(tx.amount);
 
-        balances.set(tx.id, running);
+        balances.set(
+          tx.id,
+          running
+        );
       });
 
     return balances;
   }, [transactions]);
 
-const load = useCallback(async () => {
-  if (!debtorId) return;
-
-  const [d, tx] = await Promise.all([
-      getDebtor(db, debtorId),
-      getTransactionsForDebtor(db, debtorId),
-    ]);
-
-    setDebtor(d);
-    setTransactions(tx);
-  }, [db, debtorId]);
-
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load])
-  );
+  /* =====================================================
+     DELETE TRANSACTION
+  ===================================================== */
 
   async function handleDeleteTx(txId) {
     Alert.alert(
@@ -103,53 +173,167 @@ const load = useCallback(async () => {
           text: "Cancel",
           style: "cancel",
         },
+
         {
           text: "Delete",
           style: "destructive",
+
           onPress: async () => {
-            await deleteTransaction(db, user?.id, txId);
-            load();
+            try {
+              await deleteTransaction(
+                db,
+                user?.id,
+                txId
+              );
+
+              await load();
+            } catch (error) {
+              console.error(
+                "Delete transaction error:",
+                error
+              );
+
+              Alert.alert(
+                "Error",
+                error?.message ||
+                  "Failed to delete transaction."
+              );
+            }
           },
         },
       ]
     );
   }
 
-  async function handleDeleteDebtor() {
-    if ((debtor?.balance ?? 0) > 0) {
-      Alert.alert(
-        "May utang pa",
-        `${debtor.full_name} still has an outstanding balance of ${formatCurrency(
-          debtor.balance
-        )}. Settle it before removing this debtor.`
-      );
+  /* =====================================================
+     OPEN DELETE MODAL
+  ===================================================== */
 
+  function handleDeleteDebtor() {
+    if (!debtor) return;
+
+    const balance = Number(
+      debtor.balance || 0
+    );
+
+    /* ---------------------------------------------
+       DO NOT ALLOW DELETE IF BALANCE IS POSITIVE
+    --------------------------------------------- */
+
+    if (balance > 0) {
+      setDebtWarningVisible(true);
       return;
     }
 
-    Alert.alert(
-      "Remove debtor",
-      `Remove ${debtor?.full_name} and all their records?`,
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            await deleteDebtor(db, user?.id, debtorId);
-            router.back();
-          },
-        },
-      ]
-    );
+    /* ---------------------------------------------
+       OPEN CUSTOM CONFIRMATION MODAL
+    --------------------------------------------- */
+
+    setDeleteModalVisible(true);
   }
 
-  if (!debtor) return null;
+  /* =====================================================
+     CONFIRM DELETE DEBTOR
+  ===================================================== */
 
-  const hasBalance = debtor.balance > 0;
+  async function confirmDeleteDebtor() {
+    if (!debtor || deleting) return;
+
+    try {
+      setDeleting(true);
+
+      /* ---------------------------------------------
+         DELETE FROM DATABASE
+      --------------------------------------------- */
+
+      await deleteDebtor(
+        db,
+        debtorId,
+        user?.id
+      );
+
+      /* ---------------------------------------------
+         CLOSE MODAL
+      --------------------------------------------- */
+
+      setDeleteModalVisible(false);
+
+      /* ---------------------------------------------
+         SUCCESS MESSAGE
+      --------------------------------------------- */
+
+      Alert.alert(
+        "Debtor Deleted",
+        `${debtor.full_name} has been successfully removed from your debtor list.`,
+        [
+          {
+            text: "OK",
+            onPress: () => {
+              router.replace(
+                "/debtors"
+              );
+            },
+          },
+        ],
+        {
+          cancelable: false,
+        }
+      );
+    } catch (error) {
+      console.error(
+        "Delete debtor error:",
+        error
+      );
+
+      setDeleteModalVisible(false);
+
+      Alert.alert(
+        "Cannot Delete",
+        error?.message ||
+          "Failed to delete debtor. Please try again.",
+        [
+          {
+            text: "OK",
+          },
+        ]
+      );
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  /* =====================================================
+     CLOSE DELETE MODAL
+  ===================================================== */
+
+  function cancelDeleteDebtor() {
+    if (deleting) return;
+
+    setDeleteModalVisible(false);
+  }
+
+  /* =====================================================
+     CLOSE DEBT WARNING MODAL
+  ===================================================== */
+
+  function closeDebtWarning() {
+    setDebtWarningVisible(false);
+  }
+
+  /* =====================================================
+     WAIT FOR DEBTOR
+  ===================================================== */
+
+  if (!debtor) {
+    return null;
+  }
+
+  const hasBalance =
+    Number(debtor.balance || 0) > 0;
+
+  /* =====================================================
+     RETURN UI
+  ===================================================== */
 
   return (
     <SafeAreaView
@@ -166,7 +350,8 @@ const load = useCallback(async () => {
           hitSlop={12}
           style={({ pressed }) => [
             styles.backButton,
-            pressed && styles.buttonPressed,
+            pressed &&
+              styles.buttonPressed,
           ]}
         >
           <Ionicons
@@ -189,19 +374,34 @@ const load = useCallback(async () => {
           </Text>
         </View>
 
+        {/* DELETE BUTTON */}
+
         <Pressable
           onPress={handleDeleteDebtor}
+          disabled={deleting}
           hitSlop={12}
           style={({ pressed }) => [
             styles.deleteHeaderButton,
-            pressed && styles.deleteHeaderPressed,
+
+            pressed &&
+              styles.deleteHeaderPressed,
+
+            deleting &&
+              styles.deleteDisabled,
           ]}
         >
-          <Ionicons
-            name="trash-outline"
-            size={19}
-            color={colors.danger}
-          />
+          {deleting ? (
+            <ActivityIndicator
+              size="small"
+              color={colors.danger}
+            />
+          ) : (
+            <Ionicons
+              name="trash-outline"
+              size={19}
+              color={colors.danger}
+            />
+          )}
         </Pressable>
       </View>
 
@@ -215,6 +415,7 @@ const load = useCallback(async () => {
 
         <View style={styles.heroCard}>
           <View style={styles.heroGlowOne} />
+
           <View style={styles.heroGlowTwo} />
 
           <View style={styles.heroTop}>
@@ -227,7 +428,11 @@ const load = useCallback(async () => {
                   style={styles.avatar}
                 />
               ) : (
-                <View style={styles.avatarPlaceholder}>
+                <View
+                  style={
+                    styles.avatarPlaceholder
+                  }
+                >
                   <Ionicons
                     name="person"
                     size={34}
@@ -240,9 +445,10 @@ const load = useCallback(async () => {
                 style={[
                   styles.avatarStatus,
                   {
-                    backgroundColor: hasBalance
-                      ? colors.danger
-                      : colors.success,
+                    backgroundColor:
+                      hasBalance
+                        ? colors.danger
+                        : colors.success,
                   },
                 ]}
               >
@@ -264,14 +470,19 @@ const load = useCallback(async () => {
                   style={[
                     styles.heroBadgeDot,
                     {
-                      backgroundColor: hasBalance
-                        ? colors.danger
-                        : colors.success,
+                      backgroundColor:
+                        hasBalance
+                          ? colors.danger
+                          : colors.success,
                     },
                   ]}
                 />
 
-                <Text style={styles.heroBadgeText}>
+                <Text
+                  style={
+                    styles.heroBadgeText
+                  }
+                >
                   {hasBalance
                     ? "OUTSTANDING"
                     : "SETTLED"}
@@ -285,7 +496,9 @@ const load = useCallback(async () => {
                 {debtor.full_name}
               </Text>
 
-              <Text style={styles.heroSubtext}>
+              <Text
+                style={styles.heroSubtext}
+              >
                 Customer account
               </Text>
             </View>
@@ -293,15 +506,18 @@ const load = useCallback(async () => {
             <Pressable
               onPress={() =>
                 router.push({
-                  pathname: "/debtors/edit",
+                  pathname:
+                    "/debtors/edit",
                   params: {
-                    debtorId: String(debtorId),
+                    debtorId:
+                      String(debtorId),
                   },
                 })
               }
               style={({ pressed }) => [
                 styles.heroEditButton,
-                pressed && styles.buttonPressed,
+                pressed &&
+                  styles.buttonPressed,
               ]}
             >
               <Ionicons
@@ -312,12 +528,12 @@ const load = useCallback(async () => {
             </Pressable>
           </View>
 
-          {/* Balance */}
-
           <View style={styles.heroDivider} />
 
           <View style={styles.balanceArea}>
-            <Text style={styles.balanceLabel}>
+            <Text
+              style={styles.balanceLabel}
+            >
               CURRENT BALANCE
             </Text>
 
@@ -331,10 +547,14 @@ const load = useCallback(async () => {
                 },
               ]}
             >
-              {formatCurrency(debtor.balance)}
+              {formatCurrency(
+                debtor.balance
+              )}
             </Text>
 
-            <View style={styles.balanceStatus}>
+            <View
+              style={styles.balanceStatus}
+            >
               <Ionicons
                 name={
                   hasBalance
@@ -371,9 +591,17 @@ const load = useCallback(async () => {
             QUICK ACTIONS
         ===================================================== */}
 
-        <View style={styles.quickActionsSection}>
-          <View style={styles.sectionHeading}>
-            <View style={styles.sectionHeadingIcon}>
+        <View
+          style={styles.quickActionsSection}
+        >
+          <View
+            style={styles.sectionHeading}
+          >
+            <View
+              style={
+                styles.sectionHeadingIcon
+              }
+            >
               <Ionicons
                 name="flash-outline"
                 size={17}
@@ -382,19 +610,21 @@ const load = useCallback(async () => {
             </View>
 
             <View>
-              <Text style={styles.sectionTitle}>
+              <Text
+                style={styles.sectionTitle}
+              >
                 Quick actions
               </Text>
 
-              <Text style={styles.sectionSubtitle}>
+              <Text
+                style={styles.sectionSubtitle}
+              >
                 Manage this customer account
               </Text>
             </View>
           </View>
 
           <View style={styles.actionsRow}>
-            {/* CREDIT SALE */}
-
             <Pressable
               onPress={() =>
                 router.push({
@@ -413,7 +643,11 @@ const load = useCallback(async () => {
                   styles.actionCardPressed,
               ]}
             >
-              <View style={styles.actionIconGold}>
+              <View
+                style={
+                  styles.actionIconGold
+                }
+              >
                 <Ionicons
                   name="cart-outline"
                   size={21}
@@ -422,16 +656,24 @@ const load = useCallback(async () => {
               </View>
 
               <View style={styles.actionText}>
-                <Text style={styles.actionTitle}>
+                <Text
+                  style={styles.actionTitle}
+                >
                   Log credit sale
                 </Text>
 
-                <Text style={styles.actionSubtitle}>
+                <Text
+                  style={
+                    styles.actionSubtitle
+                  }
+                >
                   Add new purchase
                 </Text>
               </View>
 
-              <View style={styles.actionArrow}>
+              <View
+                style={styles.actionArrow}
+              >
                 <Ionicons
                   name="arrow-forward"
                   size={16}
@@ -439,8 +681,6 @@ const load = useCallback(async () => {
                 />
               </View>
             </Pressable>
-
-            {/* RECORD PAYMENT */}
 
             <Pressable
               onPress={() =>
@@ -460,7 +700,11 @@ const load = useCallback(async () => {
                   styles.actionCardPressed,
               ]}
             >
-              <View style={styles.actionIconNavy}>
+              <View
+                style={
+                  styles.actionIconNavy
+                }
+              >
                 <Ionicons
                   name="cash-outline"
                   size={21}
@@ -488,7 +732,11 @@ const load = useCallback(async () => {
                 </Text>
               </View>
 
-              <View style={styles.actionArrowLight}>
+              <View
+                style={
+                  styles.actionArrowLight
+                }
+              >
                 <Ionicons
                   name="arrow-forward"
                   size={16}
@@ -503,9 +751,17 @@ const load = useCallback(async () => {
             PROFILE
         ===================================================== */}
 
-        <View style={styles.contentSection}>
-          <View style={styles.sectionHeading}>
-            <View style={styles.sectionHeadingIcon}>
+        <View
+          style={styles.contentSection}
+        >
+          <View
+            style={styles.sectionHeading}
+          >
+            <View
+              style={
+                styles.sectionHeadingIcon
+              }
+            >
               <Ionicons
                 name="person-outline"
                 size={17}
@@ -514,19 +770,29 @@ const load = useCallback(async () => {
             </View>
 
             <View style={{ flex: 1 }}>
-              <Text style={styles.sectionTitle}>
+              <Text
+                style={styles.sectionTitle}
+              >
                 Profile
               </Text>
 
-              <Text style={styles.sectionSubtitle}>
+              <Text
+                style={styles.sectionSubtitle}
+              >
                 Customer information
               </Text>
             </View>
           </View>
 
-          <Card style={styles.profileCard}>
+          <Card
+            style={styles.profileCard}
+          >
             {debtor.id_photo_uri ? (
-              <View style={styles.idPhotoContainer}>
+              <View
+                style={
+                  styles.idPhotoContainer
+                }
+              >
                 <Image
                   source={{
                     uri: debtor.id_photo_uri,
@@ -534,21 +800,31 @@ const load = useCallback(async () => {
                   style={styles.idPhoto}
                 />
 
-                <View style={styles.photoLabel}>
+                <View
+                  style={styles.photoLabel}
+                >
                   <Ionicons
                     name="shield-checkmark"
                     size={13}
                     color={colors.white}
                   />
 
-                  <Text style={styles.photoLabelText}>
+                  <Text
+                    style={
+                      styles.photoLabelText
+                    }
+                  >
                     ID PHOTO
                   </Text>
                 </View>
               </View>
             ) : (
-              <View style={styles.noPhotoCard}>
-                <View style={styles.noPhotoIcon}>
+              <View
+                style={styles.noPhotoCard}
+              >
+                <View
+                  style={styles.noPhotoIcon}
+                >
                   <Ionicons
                     name="image-outline"
                     size={22}
@@ -556,19 +832,32 @@ const load = useCallback(async () => {
                   />
                 </View>
 
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.noPhotoTitle}>
+                <View
+                  style={{ flex: 1 }}
+                >
+                  <Text
+                    style={
+                      styles.noPhotoTitle
+                    }
+                  >
                     No ID photo
                   </Text>
 
-                  <Text style={styles.noPhotoText}>
-                    Add a photo from the edit profile page.
+                  <Text
+                    style={
+                      styles.noPhotoText
+                    }
+                  >
+                    Add a photo from the edit
+                    profile page.
                   </Text>
                 </View>
               </View>
             )}
 
-            <View style={styles.infoList}>
+            <View
+              style={styles.infoList}
+            >
               <InfoRow
                 icon="card-outline"
                 title="ID number"
@@ -624,9 +913,17 @@ const load = useCallback(async () => {
             TRANSACTION HISTORY
         ===================================================== */}
 
-        <View style={styles.contentSection}>
-          <View style={styles.sectionHeading}>
-            <View style={styles.sectionHeadingIcon}>
+        <View
+          style={styles.contentSection}
+        >
+          <View
+            style={styles.sectionHeading}
+          >
+            <View
+              style={
+                styles.sectionHeadingIcon
+              }
+            >
               <Ionicons
                 name="receipt-outline"
                 size={17}
@@ -635,15 +932,20 @@ const load = useCallback(async () => {
             </View>
 
             <View style={{ flex: 1 }}>
-              <Text style={styles.sectionTitle}>
+              <Text
+                style={styles.sectionTitle}
+              >
                 Transaction history
               </Text>
 
-              <Text style={styles.sectionSubtitle}>
+              <Text
+                style={styles.sectionSubtitle}
+              >
                 {transactions.length === 0
                   ? "No account activity yet"
                   : `${transactions.length} ${
-                      transactions.length === 1
+                      transactions.length ===
+                      1
                         ? "transaction"
                         : "transactions"
                     }`}
@@ -651,8 +953,16 @@ const load = useCallback(async () => {
             </View>
 
             {transactions.length > 0 && (
-              <View style={styles.transactionCount}>
-                <Text style={styles.transactionCountText}>
+              <View
+                style={
+                  styles.transactionCount
+                }
+              >
+                <Text
+                  style={
+                    styles.transactionCountText
+                  }
+                >
                   {transactions.length}
                 </Text>
               </View>
@@ -667,24 +977,43 @@ const load = useCallback(async () => {
             ]}
           >
             {transactions.length === 0 ? (
-              <View style={styles.emptyStateWrapper}>
-                <View style={styles.emptyIconOuter}>
-                  <View style={styles.emptyIcon}>
+              <View
+                style={
+                  styles.emptyStateWrapper
+                }
+              >
+                <View
+                  style={
+                    styles.emptyIconOuter
+                  }
+                >
+                  <View
+                    style={styles.emptyIcon}
+                  >
                     <Ionicons
                       name="receipt-outline"
                       size={29}
-                      color={colors.goldLight}
+                      color={
+                        colors.goldLight
+                      }
                     />
                   </View>
                 </View>
 
-                <Text style={styles.emptyTitle}>
+                <Text
+                  style={styles.emptyTitle}
+                >
                   No transactions yet
                 </Text>
 
-                <Text style={styles.emptySubtitle}>
-                  Credit sales and payments for this
-                  customer will appear here.
+                <Text
+                  style={
+                    styles.emptySubtitle
+                  }
+                >
+                  Credit sales and payments
+                  for this customer will
+                  appear here.
                 </Text>
 
                 <Pressable
@@ -710,7 +1039,11 @@ const load = useCallback(async () => {
                     color={colors.navy}
                   />
 
-                  <Text style={styles.emptyActionText}>
+                  <Text
+                    style={
+                      styles.emptyActionText
+                    }
+                  >
                     Log first credit sale
                   </Text>
                 </Pressable>
@@ -724,13 +1057,16 @@ const load = useCallback(async () => {
                   <Pressable
                     key={tx.id}
                     onLongPress={() =>
-                      handleDeleteTx(tx.id)
+                      handleDeleteTx(
+                        tx.id
+                      )
                     }
                     delayLongPress={450}
                     style={({ pressed }) => [
                       styles.txRow,
                       i !==
-                        transactions.length - 1 &&
+                        transactions.length -
+                          1 &&
                         styles.txRowBorder,
                       pressed &&
                         styles.txRowPressed,
@@ -762,10 +1098,18 @@ const load = useCallback(async () => {
                       />
                     </View>
 
-                    <View style={styles.txMain}>
-                      <View style={styles.txTitleRow}>
+                    <View
+                      style={styles.txMain}
+                    >
+                      <View
+                        style={
+                          styles.txTitleRow
+                        }
+                      >
                         <Text
-                          style={styles.txName}
+                          style={
+                            styles.txName
+                          }
                           numberOfLines={1}
                         >
                           {isCredit
@@ -788,9 +1132,10 @@ const load = useCallback(async () => {
                             style={[
                               styles.typeBadgeText,
                               {
-                                color: isCredit
-                                  ? colors.danger
-                                  : colors.success,
+                                color:
+                                  isCredit
+                                    ? colors.danger
+                                    : colors.success,
                               },
                             ]}
                           >
@@ -806,31 +1151,42 @@ const load = useCallback(async () => {
                         numberOfLines={2}
                       >
                         {[
-                          formatPaymentMethod(tx),
+                          formatPaymentMethod(
+                            tx
+                          ),
                           tx.payment_reference
                             ? `Reference: ${tx.payment_reference}`
                             : null,
                           tx.description,
-                          formatDateTime(tx.created_at),
+                          formatDateTime(
+                            tx.created_at
+                          ),
                         ]
                           .filter(Boolean)
                           .join(" | ")}
                       </Text>
                     </View>
 
-                    <View style={styles.txBalanceCol}>
+                    <View
+                      style={
+                        styles.txBalanceCol
+                      }
+                    >
                       <Text
                         style={[
                           styles.txAmount,
                           {
-                            color: isCredit
-                              ? colors.danger
-                              : colors.success,
+                            color:
+                              isCredit
+                                ? colors.danger
+                                : colors.success,
                           },
                         ]}
                       >
                         {isCredit ? "+" : "-"}
-                        {formatCurrency(tx.amount)}
+                        {formatCurrency(
+                          tx.amount
+                        )}
                       </Text>
 
                       <Text
@@ -854,7 +1210,9 @@ const load = useCallback(async () => {
 
           {transactions.length > 0 && (
             <View style={styles.hintCard}>
-              <View style={styles.hintIcon}>
+              <View
+                style={styles.hintIcon}
+              >
                 <Ionicons
                   name="finger-print-outline"
                   size={15}
@@ -863,7 +1221,8 @@ const load = useCallback(async () => {
               </View>
 
               <Text style={styles.hint}>
-                Press and hold a transaction to remove it.
+                Press and hold a transaction
+                to remove it.
               </Text>
             </View>
           )}
@@ -873,8 +1232,12 @@ const load = useCallback(async () => {
             ACCOUNT FOOTER
         ===================================================== */}
 
-        <View style={styles.footerCard}>
-          <View style={styles.footerIcon}>
+        <View
+          style={styles.footerCard}
+        >
+          <View
+            style={styles.footerIcon}
+          >
             <Ionicons
               name="shield-checkmark-outline"
               size={18}
@@ -883,40 +1246,419 @@ const load = useCallback(async () => {
           </View>
 
           <View style={{ flex: 1 }}>
-            <Text style={styles.footerTitle}>
+            <Text
+              style={styles.footerTitle}
+            >
               Account information
             </Text>
 
-            <Text style={styles.footerText}>
+            <Text
+              style={styles.footerText}
+            >
               This debtor data is stored locally
               in Track&Tally.
             </Text>
           </View>
         </View>
       </ScrollView>
+
+      {/* =====================================================
+          MAY UTANG PA WARNING MODAL
+      ===================================================== */}
+
+      <Modal
+        visible={debtWarningVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={
+          closeDebtWarning
+        }
+      >
+        <View
+          style={styles.debtWarningOverlay}
+        >
+          <View
+            style={styles.debtWarningModal}
+          >
+            {/* WARNING ICON */}
+
+            <View
+              style={
+                styles.debtWarningIconOuter
+              }
+            >
+              <View
+                style={
+                  styles.debtWarningIconInner
+                }
+              >
+                <Ionicons
+                  name="alert"
+                  size={32}
+                  color={colors.goldDark}
+                />
+              </View>
+            </View>
+
+            {/* TITLE */}
+
+            <Text
+              style={styles.debtWarningTitle}
+            >
+              May utang pa
+            </Text>
+
+            {/* DESCRIPTION */}
+
+            <Text
+              style={
+                styles.debtWarningSubtitle
+              }
+            >
+              {debtor?.full_name ||
+                "This debtor"}{" "}
+              still has an outstanding
+              balance. Please settle the
+              balance before deleting this
+              debtor.
+            </Text>
+
+            {/* BALANCE CARD */}
+
+            <View
+              style={
+                styles.debtWarningBalanceCard
+              }
+            >
+              <View
+                style={
+                  styles.debtWarningBalanceIcon
+                }
+              >
+                <Ionicons
+                  name="wallet-outline"
+                  size={22}
+                  color={colors.goldDark}
+                />
+              </View>
+
+              <View
+                style={
+                  styles.debtWarningBalanceInfo
+                }
+              >
+                <Text
+                  style={
+                    styles.debtWarningBalanceLabel
+                  }
+                >
+                  OUTSTANDING BALANCE
+                </Text>
+
+                <Text
+                  style={
+                    styles.debtWarningBalanceValue
+                  }
+                >
+                  {formatCurrency(
+                    Number(
+                      debtor?.balance || 0
+                    )
+                  )}
+                </Text>
+              </View>
+
+              <View
+                style={
+                  styles.debtWarningUnpaidBadge
+                }
+              >
+                <Ionicons
+                  name="alert-circle"
+                  size={13}
+                  color={colors.goldDark}
+                />
+
+                <Text
+                  style={
+                    styles.debtWarningUnpaidText
+                  }
+                >
+                  UNPAID
+                </Text>
+              </View>
+            </View>
+
+            {/* INFORMATION BOX */}
+
+            <View
+              style={
+                styles.debtWarningInfoBox
+              }
+            >
+              <View
+                style={
+                  styles.debtWarningInfoIcon
+                }
+              >
+                <Ionicons
+                  name="information"
+                  size={16}
+                  color={colors.navy}
+                />
+              </View>
+
+              <Text
+                style={
+                  styles.debtWarningInfoText
+                }
+              >
+                This debtor cannot be deleted
+                while there is still an unpaid
+                balance. Record a payment
+                first, then you can delete the
+                debtor.
+              </Text>
+            </View>
+
+            {/* OKAY BUTTON */}
+
+            <Pressable
+              onPress={closeDebtWarning}
+              style={({ pressed }) => [
+                styles.debtWarningButton,
+                pressed &&
+                  styles.debtWarningButtonPressed,
+              ]}
+            >
+              <Text
+                style={
+                  styles.debtWarningButtonText
+                }
+              >
+                Okay, Got It
+              </Text>
+
+              <View
+                style={
+                  styles.debtWarningButtonIcon
+                }
+              >
+                <Ionicons
+                  name="checkmark"
+                  size={17}
+                  color={colors.navy}
+                />
+              </View>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* =====================================================
+          DELETE CONFIRMATION MODAL
+      ===================================================== */}
+
+      <Modal
+        visible={deleteModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={
+          cancelDeleteDebtor
+        }
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.deleteModal}>
+            {/* DELETE ICON */}
+
+            <View style={styles.deleteModalIcon}>
+              <Ionicons
+                name="trash-outline"
+                size={28}
+                color={colors.danger}
+              />
+            </View>
+
+            {/* TITLE */}
+
+            <Text
+              style={styles.deleteModalTitle}
+            >
+              Delete debtor?
+            </Text>
+
+            {/* DESCRIPTION */}
+
+            <Text
+              style={styles.deleteModalText}
+            >
+              Are you sure you want to permanently
+              remove this debtor from Track&Tally?
+            </Text>
+
+            {/* DEBTOR CARD */}
+
+            <View
+              style={styles.deletePersonCard}
+            >
+              <View
+                style={styles.deletePersonAvatar}
+              >
+                <Ionicons
+                  name="person"
+                  size={20}
+                  color={colors.goldLight}
+                />
+              </View>
+
+              <View
+                style={
+                  styles.deletePersonInfo
+                }
+              >
+                <Text
+                  style={
+                    styles.deletePersonName
+                  }
+                  numberOfLines={1}
+                >
+                  {debtor.full_name}
+                </Text>
+
+                <Text
+                  style={
+                    styles.deletePersonBalance
+                  }
+                >
+                  Balance:{" "}
+                  {formatCurrency(
+                    debtor.balance || 0
+                  )}
+                </Text>
+              </View>
+            </View>
+
+            {/* WARNING */}
+
+            <View
+              style={styles.deleteWarning}
+            >
+              <Ionicons
+                name="warning-outline"
+                size={17}
+                color={colors.danger}
+              />
+
+              <Text
+                style={styles.deleteWarningText}
+              >
+                This action cannot be undone.
+              </Text>
+            </View>
+
+            {/* BUTTONS */}
+
+            <View
+              style={styles.deleteModalActions}
+            >
+              <Pressable
+                onPress={
+                  cancelDeleteDebtor
+                }
+                disabled={deleting}
+                style={({ pressed }) => [
+                  styles.cancelDeleteButton,
+                  pressed &&
+                    styles.modalButtonPressed,
+                ]}
+              >
+                <Text
+                  style={
+                    styles.cancelDeleteText
+                  }
+                >
+                  Cancel
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={
+                  confirmDeleteDebtor
+                }
+                disabled={deleting}
+                style={({ pressed }) => [
+                  styles.confirmDeleteButton,
+                  pressed &&
+                    styles.modalButtonPressed,
+                  deleting &&
+                    styles.confirmDeleteDisabled,
+                ]}
+              >
+                {deleting ? (
+                  <ActivityIndicator
+                    size="small"
+                    color={colors.white}
+                  />
+                ) : (
+                  <>
+                    <Ionicons
+                      name="trash-outline"
+                      size={17}
+                      color={colors.white}
+                    />
+
+                    <Text
+                      style={
+                        styles.confirmDeleteText
+                      }
+                    >
+                      Delete
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 /* =========================================================
-   INFO ROW
+   FORMAT PAYMENT METHOD
 ========================================================= */
 
 function formatPaymentMethod(transaction) {
-  if (transaction.type !== "payment") return null;
+  if (transaction.type !== "payment") {
+    return null;
+  }
 
-  if (transaction.payment_method === "e_wallet") {
+  if (
+    transaction.payment_method ===
+    "e_wallet"
+  ) {
     return transaction.payment_provider
       ? `E-wallet: ${transaction.payment_provider}`
       : "E-wallet";
   }
 
-  if (transaction.payment_method === "e_banking") {
+  if (
+    transaction.payment_method ===
+    "e_banking"
+  ) {
     return "E-banking";
   }
 
-  return transaction.payment_method === "cash" ? "Cash" : null;
+  return transaction.payment_method ===
+    "cash"
+    ? "Cash"
+    : null;
 }
+
+/* =========================================================
+   INFO ROW
+========================================================= */
 
 function InfoRow({
   icon,
@@ -939,7 +1681,9 @@ function InfoRow({
         />
       </View>
 
-      <View style={styles.infoContent}>
+      <View
+        style={styles.infoContent}
+      >
         <Text style={styles.infoTitle}>
           {title}
         </Text>
@@ -961,8 +1705,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.cream,
   },
-
-  /* HEADER */
 
   header: {
     flexDirection: "row",
@@ -1028,24 +1770,36 @@ const styles = StyleSheet.create({
 
   deleteHeaderPressed: {
     opacity: 0.65,
-    transform: [{ scale: 0.9 }],
+    transform: [
+      {
+        scale: 0.9,
+      },
+    ],
+  },
+
+  deleteDisabled: {
+    opacity: 0.5,
   },
 
   buttonPressed: {
     opacity: 0.7,
-    transform: [{ scale: 0.94 }],
+    transform: [
+      {
+        scale: 0.94,
+      },
+    ],
   },
-
-  /* CONTAINER */
 
   container: {
     paddingHorizontal: spacing.md,
     paddingTop: 14,
     gap: 19,
-    paddingBottom:spacing.lg,
+    paddingBottom: spacing.lg,
   },
 
-  /* HERO */
+  /* =====================================================
+     HERO
+  ===================================================== */
 
   heroCard: {
     position: "relative",
@@ -1226,7 +1980,9 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
-  /* SECTION HEADINGS */
+  /* =====================================================
+     QUICK ACTIONS
+  ===================================================== */
 
   quickActionsSection: {
     gap: 11,
@@ -1271,8 +2027,6 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: 2,
   },
-
-  /* QUICK ACTIONS */
 
   actionsRow: {
     gap: 10,
@@ -1330,8 +2084,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  /* CREDIT SALE TEXT */
-
   actionTitle: {
     fontSize: 12,
     fontWeight: "900",
@@ -1343,8 +2095,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
     color: "#142C4A99",
   },
-
-  /* RECORD PAYMENT TEXT */
 
   paymentActionText: {
     color: colors.white,
@@ -1374,28 +2124,16 @@ const styles = StyleSheet.create({
 
   actionCardPressed: {
     opacity: 0.78,
-    transform: [{ scale: 0.975 }],
+    transform: [
+      {
+        scale: 0.975,
+      },
+    ],
   },
 
-  /* PROFILE */
-
-  editButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 10,
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-
-  editButtonText: {
-    fontSize: 9,
-    fontWeight: "900",
-    color: colors.navy,
-  },
+  /* =====================================================
+     PROFILE
+  ===================================================== */
 
   profileCard: {
     padding: 13,
@@ -1535,7 +2273,9 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  /* TRANSACTIONS */
+  /* =====================================================
+     TRANSACTIONS
+  ===================================================== */
 
   transactionCount: {
     minWidth: 29,
@@ -1652,8 +2392,6 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
 
-  /* EMPTY TRANSACTIONS */
-
   emptyStateWrapper: {
     flex: 1,
     minHeight: 270,
@@ -1727,8 +2465,6 @@ const styles = StyleSheet.create({
     color: colors.navy,
   },
 
-  /* HINT */
-
   hintCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -1758,7 +2494,9 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  /* FOOTER */
+  /* =====================================================
+     FOOTER
+  ===================================================== */
 
   footerCard: {
     flexDirection: "row",
@@ -1791,5 +2529,381 @@ const styles = StyleSheet.create({
     lineHeight: 12,
     color: colors.textMuted,
     marginTop: 2,
+  },
+
+  /* =====================================================
+     MAY UTANG PA WARNING MODAL
+  ===================================================== */
+
+  debtWarningOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(10, 25, 47, 0.78)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+  },
+
+  debtWarningModal: {
+    width: "100%",
+    maxWidth: 430,
+    backgroundColor: colors.white,
+    borderRadius: 28,
+    paddingHorizontal: 20,
+    paddingTop: 25,
+    paddingBottom: 20,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#FFFFFF",
+
+    shadowColor: colors.navy,
+    shadowOffset: {
+      width: 0,
+      height: 14,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 28,
+    elevation: 18,
+  },
+
+  debtWarningIconOuter: {
+    width: 84,
+    height: 84,
+    borderRadius: 28,
+    backgroundColor: "#FFF9E5",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: "#F2DF9B",
+  },
+
+  debtWarningIconInner: {
+    width: 60,
+    height: 60,
+    borderRadius: 20,
+    backgroundColor: "#FFEFB2",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#F0D878",
+  },
+
+  debtWarningTitle: {
+    color: colors.navy,
+    fontSize: 25,
+    fontWeight: "900",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+
+  debtWarningSubtitle: {
+    color: colors.textMuted,
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: "center",
+    paddingHorizontal: 5,
+    marginBottom: 17,
+  },
+
+  debtWarningBalanceCard: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFF8DF",
+    borderWidth: 1,
+    borderColor: "#F0DB91",
+    borderRadius: 17,
+    padding: 13,
+    marginBottom: 12,
+  },
+
+  debtWarningBalanceIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: "#FFEFB5",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+
+  debtWarningBalanceInfo: {
+    flex: 1,
+  },
+
+  debtWarningBalanceLabel: {
+    color: colors.goldDark,
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1,
+    marginBottom: 2,
+  },
+
+  debtWarningBalanceValue: {
+    color: colors.navy,
+    fontSize: 21,
+    fontWeight: "900",
+  },
+
+  debtWarningUnpaidBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    backgroundColor: "#FFF0B8",
+    gap: 4,
+  },
+
+  debtWarningUnpaidText: {
+    color: colors.goldDark,
+    fontSize: 8,
+    fontWeight: "900",
+    letterSpacing: 0.6,
+  },
+
+  debtWarningInfoBox: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F8F6EE",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 15,
+    padding: 12,
+    marginBottom: 17,
+  },
+
+  debtWarningInfoIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    backgroundColor: colors.cream,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 9,
+  },
+
+  debtWarningInfoText: {
+    flex: 1,
+    color: colors.textMuted,
+    fontSize: 11.5,
+    lineHeight: 17,
+  },
+
+  debtWarningButton: {
+    width: "100%",
+    minHeight: 53,
+    borderRadius: 17,
+    backgroundColor: colors.navy,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 9,
+
+    shadowColor: colors.navy,
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 9,
+    elevation: 5,
+  },
+
+  debtWarningButtonPressed: {
+    opacity: 0.82,
+    transform: [
+      {
+        scale: 0.98,
+      },
+    ],
+  },
+
+  debtWarningButtonText: {
+    color: colors.white,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+
+  debtWarningButtonIcon: {
+    width: 27,
+    height: 27,
+    borderRadius: 9,
+    backgroundColor: colors.goldLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  /* =====================================================
+     DELETE MODAL
+  ===================================================== */
+
+  modalOverlay: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 22,
+    backgroundColor: "rgba(7, 27, 46, 0.72)",
+  },
+
+  deleteModal: {
+    width: "100%",
+    maxWidth: 420,
+    borderRadius: 25,
+    padding: 20,
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.border,
+    shadowColor: colors.navy,
+    shadowOpacity: 0.3,
+    shadowRadius: 25,
+    shadowOffset: {
+      width: 0,
+      height: 12,
+    },
+    elevation: 12,
+  },
+
+  deleteModalIcon: {
+    width: 62,
+    height: 62,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "center",
+    backgroundColor: "#B3413B12",
+    borderWidth: 1,
+    borderColor: "#B3413B25",
+    marginBottom: 13,
+  },
+
+  deleteModalTitle: {
+    textAlign: "center",
+    fontSize: 20,
+    fontWeight: "900",
+    color: colors.navy,
+  },
+
+  deleteModalText: {
+    textAlign: "center",
+    fontSize: 10.5,
+    lineHeight: 16,
+    color: colors.textMuted,
+    marginTop: 7,
+    paddingHorizontal: 8,
+  },
+
+  deletePersonCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+    marginTop: 17,
+    padding: 12,
+    borderRadius: 16,
+    backgroundColor: colors.cream,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+
+  deletePersonAvatar: {
+    width: 43,
+    height: 43,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.navy,
+  },
+
+  deletePersonInfo: {
+    flex: 1,
+  },
+
+  deletePersonName: {
+    fontSize: 12.5,
+    fontWeight: "900",
+    color: colors.navy,
+  },
+
+  deletePersonBalance: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: colors.textMuted,
+    marginTop: 3,
+  },
+
+  deleteWarning: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    marginTop: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderRadius: 11,
+    backgroundColor: "#B3413B0D",
+    borderWidth: 1,
+    borderColor: "#B3413B20",
+  },
+
+  deleteWarningText: {
+    flex: 1,
+    fontSize: 9,
+    fontWeight: "700",
+    color: colors.danger,
+  },
+
+  deleteModalActions: {
+    flexDirection: "row",
+    gap: 9,
+    marginTop: 17,
+  },
+
+  cancelDeleteButton: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.cream,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+
+  cancelDeleteText: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: colors.navy,
+  },
+
+  confirmDeleteButton: {
+    flex: 1,
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    borderRadius: 14,
+    backgroundColor: colors.danger,
+    borderWidth: 1,
+    borderColor: colors.danger,
+  },
+
+  confirmDeleteText: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: colors.white,
+  },
+
+  confirmDeleteDisabled: {
+    opacity: 0.65,
+  },
+
+  modalButtonPressed: {
+    opacity: 0.75,
+    transform: [
+      {
+        scale: 0.98,
+      },
+    ],
   },
 });

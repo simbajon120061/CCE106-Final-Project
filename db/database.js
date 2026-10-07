@@ -406,8 +406,73 @@ export async function updateDebtor(db, id, data) {
   );
 }
 
-export async function deleteDebtor(db, id) {
-  await db.runAsync(`DELETE FROM debtors WHERE id = ?`, [id]);
+export async function deleteDebtor(db, id, userId) {
+  if (!db) {
+    throw new Error("Database is not available.");
+  }
+
+  if (!id) {
+    throw new Error("Invalid debtor ID.");
+  }
+
+  if (!userId) {
+    throw new Error("User is not logged in.");
+  }
+
+  // Check that this debtor belongs to the logged-in user
+  const debtor = await db.getFirstAsync(
+    `
+    SELECT id, full_name
+    FROM debtors
+    WHERE id = ? AND user_id = ?
+    `,
+    [id, userId]
+  );
+
+  if (!debtor) {
+    throw new Error("Debtor not found.");
+  }
+
+  // Check the debtor's remaining balance
+  const balanceResult = await db.getFirstAsync(
+    `
+    SELECT COALESCE(
+      SUM(
+        CASE
+          WHEN type = 'credit' THEN amount
+          WHEN type = 'payment' THEN -amount
+          ELSE 0
+        END
+      ),
+      0
+    ) AS balance
+    FROM transactions
+    WHERE debtor_id = ? AND user_id = ?
+    `,
+    [id, userId]
+  );
+
+  const balance = Number(balanceResult?.balance || 0);
+
+  // Do not allow deletion if the debtor still owes money
+  if (balance > 0) {
+    throw new Error(
+      "This debtor still has an outstanding balance. Please settle the debt before deleting the debtor."
+    );
+  }
+
+  // Delete the debtor.
+  // Transactions are automatically deleted because
+  // transactions.debtor_id uses ON DELETE CASCADE.
+  await db.runAsync(
+    `
+    DELETE FROM debtors
+    WHERE id = ? AND user_id = ?
+    `,
+    [id, userId]
+  );
+
+  return true;
 }
 
 export async function getTotalOutstanding(db, userId) {
