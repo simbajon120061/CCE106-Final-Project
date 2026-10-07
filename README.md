@@ -1,5 +1,28 @@
 # Track & Tally
 
+## Firebase setup
+
+The app is currently SQLite-first, so its existing local accounts, inventory,
+and sales continue to work offline. Firebase is now prepared for adding cloud
+authentication and Firestore sync without changing that behavior.
+
+1. Create a Firebase project, add a **Web app**, and create a **Cloud Firestore** database.
+2. Copy `.env.example` to `.env` and replace every value with the Web app configuration from **Firebase Console → Project settings → Your apps**.
+3. In Firebase Console, enable the authentication provider you plan to use before adding sign-in code.
+4. Restart Expo after editing `.env`.
+
+Import shared Firebase services from `firebaseConfig.js`:
+
+```js
+import { getFirebaseAuth, getFirebaseDb } from "@/firebaseConfig";
+
+const auth = getFirebaseAuth();
+const firestore = getFirebaseDb();
+```
+
+Do not commit `.env`. Firebase web configuration identifies the project but is
+not a server secret; Firestore Security Rules must still enforce access control.
+
 Track & Tally is a mobile commerce and credit-tracking app built for sari-sari stores and small retail businesses. It helps owners manage customer debts, cash and credit sales, inventory, and daily store performance directly on-device using SQLite.
 
 ## Overview
