@@ -1,8 +1,6 @@
-// The Firebase JavaScript SDK works inside Expo Go.  The React Native Firebase
-// SDK requires a custom native build, so it cannot be used for Expo Go demos.
-import firebase from "firebase/compat/app";
-import "firebase/compat/auth";
-import "firebase/compat/firestore";
+import { initializeApp } from "firebase/app";
+import { getAuth, connectAuthEmulator } from "firebase/auth";
+import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
 import { initializeFirebaseAuth } from "./firebaseAuthPersistence";
 
 const firebaseConfig = {
@@ -11,27 +9,51 @@ const firebaseConfig = {
   projectId: "tracktally-f7dd3",
   storageBucket: "tracktally-f7dd3.firebasestorage.app",
   messagingSenderId: "329456343078",
-  // This is the Android app ID from google-services.json. Firebase accepts it
-  // as the app identifier for the JavaScript client as well.
   appId: "1:329456343078:android:e4ddd7f360f1ae45c2eee7",
 };
 
-if (!firebase.apps.length) {
-  firebase.initializeApp(firebaseConfig);
+let app;
+let auth;
+let firebaseDb;
+
+function initializeFirebase() {
+  if (app) return;
+
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  firebaseDb = getFirestore(app);
+
+  // Enable Firestore persistence for React Native
+  try {
+    firebaseDb.enablePersistence?.().catch((error) => {
+      // Persistence is already enabled or not available
+      if (error.code !== "failed-precondition" && error.code !== "unimplemented") {
+        console.warn("Firestore persistence error:", error);
+      }
+    });
+  } catch (error) {
+    console.warn("Could not enable Firestore persistence:", error);
+  }
+
+  initializeFirebaseAuth(auth);
 }
 
-initializeFirebaseAuth(firebase.app());
+// Initialize on module load
+initializeFirebase();
 
 export function getFirebaseApp() {
-  return firebase.app();
+  if (!app) initializeFirebase();
+  return app;
 }
 
 export function getFirebaseAuth() {
-  return firebase.auth();
+  if (!auth) initializeFirebase();
+  return auth;
 }
 
 export function getFirebaseDb() {
-  return firebase.firestore();
+  if (!firebaseDb) initializeFirebase();
+  return firebaseDb;
 }
 
 export const isFirebaseConfigured = Boolean(
