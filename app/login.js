@@ -183,6 +183,7 @@ export default function LoginScreen() {
         id: user.id,
         phoneNumber: user.phone_number,
         storeName: user.store_name,
+        ownerName: user.owner_name || "",
       });
 
     } catch (error) {

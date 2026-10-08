@@ -1,27 +1,34 @@
 // db/database.js
 import { scheduleCloudSync } from "@/db/cloudSync";
 
-const DB_VERSION = 13;
+const DB_VERSION = 15;
 
 /**
  * Runs once when the SQLiteProvider mounts. Creates tables if they don't
  * exist yet and stamps a user_version so future schema changes can migrate
  * safely instead of dropping data.
  */
-export async function updateUserProfile(db, { id, storeName, phoneNumber }) {
+export async function updateUserProfile(
+  db,
+  { id, storeName, phoneNumber, ownerName }
+) {
   const hasEmailColumn = await userColumnExists(db, "email");
   if (hasEmailColumn) {
     await db.runAsync(
-      `UPDATE users SET store_name = ?, phone_number = ?, email = ? WHERE id = ?`,
-      [storeName, phoneNumber, phoneNumber, id]
+      `UPDATE users
+       SET store_name = ?, owner_name = ?, phone_number = ?, email = ?
+       WHERE id = ?`,
+      [storeName, ownerName, phoneNumber, phoneNumber, id]
     );
     scheduleCloudSync(db, id);
     return;
   }
 
   await db.runAsync(
-    `UPDATE users SET store_name = ?, phone_number = ? WHERE id = ?`,
-    [storeName, phoneNumber, id]
+    `UPDATE users
+     SET store_name = ?, owner_name = ?, phone_number = ?
+     WHERE id = ?`,
+    [storeName, ownerName, phoneNumber, id]
   );
   scheduleCloudSync(db, id);
 }
@@ -391,6 +398,37 @@ export async function migrateDbIfNeeded(db) {
     currentVersion = 13;
   }
 
+  if (currentVersion < 14) {
+    if (!(await userColumnExists(db, "owner_name"))) {
+      await db.execAsync(`ALTER TABLE users ADD COLUMN owner_name TEXT;`);
+    }
+    currentVersion = 14;
+  }
+
+  if (currentVersion < 15) {
+    const transactionColumns = await db.getAllAsync(
+      "PRAGMA table_info(transactions)"
+    );
+    const hasTransactionColumn = (name) =>
+      transactionColumns.some((column) => column.name === name);
+    if (!hasTransactionColumn("payment_method")) {
+      await db.execAsync(
+        `ALTER TABLE transactions ADD COLUMN payment_method TEXT;`
+      );
+    }
+    if (!hasTransactionColumn("payment_provider")) {
+      await db.execAsync(
+        `ALTER TABLE transactions ADD COLUMN payment_provider TEXT;`
+      );
+    }
+    if (!hasTransactionColumn("payment_reference")) {
+      await db.execAsync(
+        `ALTER TABLE transactions ADD COLUMN payment_reference TEXT;`
+      );
+    }
+    currentVersion = 15;
+  }
+
   await ensureUserCloudColumns(db);
   await db.execAsync(`PRAGMA user_version = ${DB_VERSION}`);
 }
@@ -417,7 +455,8 @@ export async function getDebtors(db, userId, search) {
         ), 0
       ) AS balance
      FROM debtors d
-     LEFT JOIN transactions t ON t.debtor_id = d.id
+     LEFT JOIN transactions t
+       ON t.debtor_id = d.id AND t.user_id = d.user_id
      ${where}
      GROUP BY d.id
      ORDER BY d.full_name ASC`,
@@ -430,7 +469,8 @@ export async function getDebtor(db, id, userId) {
       `SELECT d.*, 
          COALESCE(SUM(CASE WHEN t.type = 'credit' THEN t.amount ELSE -t.amount END), 0) AS balance
        FROM debtors d
-       LEFT JOIN transactions t ON t.debtor_id = d.id
+       LEFT JOIN transactions t
+         ON t.debtor_id = d.id AND t.user_id = d.user_id
        WHERE d.id = ? AND d.deleted_at IS NULL
        GROUP BY d.id`,
       [id]
@@ -441,7 +481,8 @@ export async function getDebtor(db, id, userId) {
     `SELECT d.*, 
        COALESCE(SUM(CASE WHEN t.type = 'credit' THEN t.amount ELSE -t.amount END), 0) AS balance
      FROM debtors d
-     LEFT JOIN transactions t ON t.debtor_id = d.id
+     LEFT JOIN transactions t
+       ON t.debtor_id = d.id AND t.user_id = d.user_id
      WHERE d.id = ? AND d.user_id = ? AND d.deleted_at IS NULL
      GROUP BY d.id`,
     [id, userId]
@@ -595,15 +636,32 @@ export async function getTotalOutstanding(db, userId) {
 
 /* --------------------------- Transactions --------------------------- */
 
-export async function getTransactionsForDebtor(db, debtorId) {
+export async function getTransactionsForDebtor(db, debtorId, userId) {
+  if (userId == null) {
+    throw new Error("A store account is required to load debtor transactions.");
+  }
   return db.getAllAsync(
-    `SELECT * FROM transactions WHERE debtor_id = ? ORDER BY created_at DESC, id DESC`,
-    [debtorId]
+    `SELECT t.*
+     FROM transactions t
+     INNER JOIN debtors d
+       ON d.id = t.debtor_id AND d.user_id = t.user_id
+     WHERE t.debtor_id = ? AND t.user_id = ? AND d.user_id = ?
+     ORDER BY t.created_at DESC, t.id DESC`,
+    [debtorId, userId, userId]
   );
 }
 
 export async function addCreditTransaction(db, params) {
   await db.withTransactionAsync(async () => {
+    const debtor = await db.getFirstAsync(
+      `SELECT id FROM debtors
+       WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+      [params.debtorId, params.userId]
+    );
+    if (!debtor) {
+      throw new Error("The selected debtor does not belong to this store.");
+    }
+
     await db.runAsync(
       `INSERT INTO transactions (user_id, debtor_id, type, amount, description, product_id, quantity) 
        VALUES (?, ?, 'credit', ?, ?, ?, ?)`,
@@ -632,20 +690,45 @@ export async function addPaymentTransaction(db, params) {
     throw new Error("Payment amount must be greater than zero.");
   }
 
-  const balanceResult = await db.getFirstAsync(
-    `SELECT COALESCE(SUM(CASE WHEN type = 'credit' THEN amount ELSE -amount END), 0) AS balance
-     FROM transactions WHERE debtor_id = ?`,
-    [params.debtorId]
-  );
-  if (amount > Number(balanceResult?.balance || 0)) {
-    throw new Error("Payment cannot exceed the debtor's outstanding balance.");
-  }
+  await db.withTransactionAsync(async () => {
+    const debtor = await db.getFirstAsync(
+      `SELECT id FROM debtors
+       WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+      [params.debtorId, params.userId]
+    );
+    if (!debtor) {
+      throw new Error("The selected debtor does not belong to this store.");
+    }
 
-  await db.runAsync(
-    `INSERT INTO transactions (user_id, debtor_id, type, amount, description) 
-     VALUES (?, ?, 'payment', ?, ?)`,
-    [params.userId ?? null, params.debtorId, amount, params.description ?? null]
-  );
+    const balanceResult = await db.getFirstAsync(
+      `SELECT COALESCE(
+         SUM(CASE WHEN type = 'credit' THEN amount ELSE -amount END), 0
+       ) AS balance
+       FROM transactions
+       WHERE debtor_id = ? AND user_id = ?`,
+      [params.debtorId, params.userId]
+    );
+    if (amount > Number(balanceResult?.balance || 0)) {
+      throw new Error("Payment cannot exceed the debtor's outstanding balance.");
+    }
+
+    await db.runAsync(
+      `INSERT INTO transactions (
+         user_id, debtor_id, type, amount, description,
+         payment_method, payment_provider, payment_reference
+       )
+       VALUES (?, ?, 'payment', ?, ?, ?, ?, ?)`,
+      [
+        params.userId,
+        params.debtorId,
+        amount,
+        params.description ?? null,
+        params.paymentMethod ?? "cash",
+        params.paymentProvider ?? null,
+        params.paymentReference ?? null,
+      ]
+    );
+  });
   scheduleCloudSync(db, params.userId);
 }
 
@@ -660,13 +743,22 @@ async function ensureCloudSyncColumns(db) {
   );
 }
 
-export async function deleteTransaction(db, id) {
+export async function deleteTransaction(db, userId, id) {
+  if (userId == null) {
+    throw new Error("A store account is required to delete a transaction.");
+  }
   const owner = await db.getFirstAsync(
-    "SELECT user_id FROM transactions WHERE id = ?",
-    [id]
+    "SELECT user_id FROM transactions WHERE id = ? AND user_id = ?",
+    [id, userId]
   );
+  if (!owner) {
+    throw new Error("Transaction not found for this store.");
+  }
   await db.withTransactionAsync(async () => {
-    await db.runAsync(`DELETE FROM transactions WHERE id = ?`, [id]);
+    await db.runAsync(
+      `DELETE FROM transactions WHERE id = ? AND user_id = ?`,
+      [id, userId]
+    );
     await recordCloudDeletion(db, owner?.user_id, "transactions", id);
   });
   scheduleCloudSync(db, owner?.user_id);
@@ -827,6 +919,14 @@ export async function createSale(db, userId, { saleType, debtorId = null, items 
       if (!debtorId) {
         throw new Error("Select a debtor for an utang sale.");
       }
+      const debtor = await db.getFirstAsync(
+        `SELECT id FROM debtors
+         WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+        [debtorId, userId]
+      );
+      if (!debtor) {
+        throw new Error("The selected debtor does not belong to this store.");
+      }
       await db.runAsync(
         `INSERT INTO transactions ( user_id, debtor_id, type, amount, description)
          VALUES (?, ?, 'credit', ?, ?)`,
@@ -846,7 +946,8 @@ export async function getDebtorOptions(db, userId) {
     `SELECT d.id, d.full_name, d.contact_number,
       COALESCE(SUM(CASE WHEN t.type = 'credit' THEN t.amount ELSE -t.amount END), 0) AS balance
      FROM debtors d
-     LEFT JOIN transactions t ON t.debtor_id = d.id
+     LEFT JOIN transactions t
+       ON t.debtor_id = d.id AND t.user_id = d.user_id
      WHERE d.user_id = ? AND d.deleted_at IS NULL
      GROUP BY d.id
      ORDER BY d.full_name ASC`,
@@ -935,7 +1036,8 @@ export async function getUnpaidBalances(db, userId) {
   return db.getAllAsync(
     `SELECT d.*, COALESCE(SUM(CASE WHEN t.type = 'credit' THEN t.amount ELSE -t.amount END), 0) AS balance
      FROM debtors d
-     LEFT JOIN transactions t ON t.debtor_id = d.id
+     LEFT JOIN transactions t
+       ON t.debtor_id = d.id AND t.user_id = d.user_id
      WHERE d.user_id = ? AND d.deleted_at IS NULL
      GROUP BY d.id
      HAVING balance > 0

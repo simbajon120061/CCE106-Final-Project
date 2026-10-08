@@ -82,7 +82,7 @@ export default function DebtorDetailScreen() {
      LOAD DEBTOR
   ===================================================== */
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (shouldApply = () => true) => {
     if (!debtorId) return;
 
     try {
@@ -100,9 +100,22 @@ export default function DebtorDetailScreen() {
         ),
       ]);
 
-      setDebtor(d);
+      if (!shouldApply()) return;
 
-      setTransactions(tx || []);
+      const belongsToCurrentStore =
+        d &&
+        String(d.id) === debtorId &&
+        String(d.user_id) === String(user?.id);
+      setDebtor(d);
+      setTransactions(
+        belongsToCurrentStore
+          ? (tx || []).filter(
+              (transaction) =>
+                String(transaction.debtor_id) === debtorId &&
+                String(transaction.user_id) === String(user?.id)
+            )
+          : []
+      );
     } catch (error) {
       console.error(
         "Load debtor error:",
@@ -118,7 +131,11 @@ export default function DebtorDetailScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      load();
+      let active = true;
+      load(() => active);
+      return () => {
+        active = false;
+      };
     }, [load])
   );
 

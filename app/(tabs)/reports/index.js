@@ -416,9 +416,11 @@ export default function ReportsScreen() {
     if (!user?.id) return undefined;
 
     let current = true;
-    setBackupScheduleLoading(true);
 
     AsyncStorage.getItem(`${BACKUP_SETTINGS_KEY}${user.id}`)
+      .then((stored) => {
+        if (!current) return;
+        setBackupScheduleLoading(true);
       .then((stored) => {
         if (!stored || !current) return;
         const settings = JSON.parse(stored);

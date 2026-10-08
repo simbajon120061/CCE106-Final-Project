@@ -37,7 +37,7 @@ export async function syncLinkedStore(db, localUserId) {
   const job = (async () => {
     try {
       const localUser = await db.getFirstAsync(
-        "SELECT firebase_uid, phone_number, store_name FROM users WHERE id = ?",
+        "SELECT firebase_uid, phone_number, store_name, owner_name FROM users WHERE id = ?",
         [localUserId]
       );
       const firebaseUser = getFirebaseAuth().currentUser;
@@ -58,6 +58,7 @@ export async function syncLinkedStore(db, localUserId) {
       const result = await syncLocalDataToFirestore(db, localUserId, {
         phoneNumber: localUser.phone_number,
         storeName: localUser.store_name,
+        ownerName: localUser.owner_name,
       }, cancellation);
       const state = { status: "synced", ...result };
       publish(localUserId, state);

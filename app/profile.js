@@ -11,7 +11,7 @@ import {
 } from "react-native";
 
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSQLiteContext } from "expo-sqlite";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -44,6 +44,10 @@ export default function ProfileScreen() {
     user?.storeName || ""
   );
 
+  const [ownerName, setOwnerName] = useState(
+    user?.ownerName || ""
+  );
+
   const [phoneNumber, setPhoneNumber] = useState(
     user?.phoneNumber || ""
   );
@@ -60,6 +64,23 @@ export default function ProfileScreen() {
   const [modalType, setModalType] = useState("success");
   const [modalTitle, setModalTitle] = useState("");
   const [modalMessage, setModalMessage] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    if (!user?.id) return undefined;
+
+    db.getFirstAsync("SELECT owner_name FROM users WHERE id = ?", [user.id])
+      .then((profile) => {
+        if (active) setOwnerName(profile?.owner_name || "");
+      })
+      .catch((error) => {
+        console.error("Could not load store owner name:", error);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [db, user?.id]);
 
   function showModal(type, title, message) {
     setModalType(type);
@@ -95,12 +116,14 @@ export default function ProfileScreen() {
       await updateUserProfile(db, {
         id: user.id,
         storeName: storeName.trim(),
+        ownerName: ownerName.trim(),
         phoneNumber: normalizedPhone,
       });
 
       await login({
         ...user,
         storeName: storeName.trim(),
+        ownerName: ownerName.trim(),
         phoneNumber: normalizedPhone,
       });
 
@@ -352,6 +375,37 @@ export default function ProfileScreen() {
                 onChangeText={setStoreName}
                 placeholder="e.g. Aling Nena's Store"
                 placeholderTextColor={colors.textMuted}
+              />
+
+            </View>
+
+            {/* STORE OWNER */}
+
+            <View style={styles.inputGroup}>
+
+              <View style={styles.labelRow}>
+
+                <View style={styles.labelIcon}>
+                  <Ionicons
+                    name="person-outline"
+                    size={14}
+                    color={colors.navy}
+                  />
+                </View>
+
+                <Text style={styles.label}>
+                  Store Owner
+                </Text>
+
+              </View>
+
+              <TextInput
+                style={styles.input}
+                value={ownerName}
+                onChangeText={setOwnerName}
+                placeholder="Enter store owner's name"
+                placeholderTextColor={colors.textMuted}
+                autoCapitalize="words"
               />
 
             </View>
@@ -860,6 +914,8 @@ export default function ProfileScreen() {
 ================================= */
 
 function PinInput({ value, onChangeText }) {
+  const [pinVisible, setPinVisible] = useState(false);
+
   return (
     <View style={styles.pinWrapper}>
 
@@ -873,7 +929,7 @@ function PinInput({ value, onChangeText }) {
 
       <TextInput
         style={styles.pinInput}
-        secureTextEntry
+        secureTextEntry={!pinVisible}
         value={value}
         onChangeText={(nextValue) =>
           onChangeText(
@@ -885,6 +941,20 @@ function PinInput({ value, onChangeText }) {
         placeholder="••••"
         placeholderTextColor={colors.textMuted}
       />
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={pinVisible ? "Hide PIN" : "Show PIN"}
+        onPress={() => setPinVisible((visible) => !visible)}
+        hitSlop={8}
+        style={styles.pinVisibilityToggle}
+      >
+        <Ionicons
+          name={pinVisible ? "eye-off-outline" : "eye-outline"}
+          size={19}
+          color={colors.textMuted}
+        />
+      </Pressable>
 
       <View style={styles.pinCounter}>
         <Text style={styles.pinCounterText}>
@@ -1249,6 +1319,13 @@ const styles = StyleSheet.create({
     letterSpacing: 6,
     color: colors.navy,
     fontWeight: "700",
+  },
+
+  pinVisibilityToggle: {
+    width: 36,
+    height: 42,
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   pinCounter: {
