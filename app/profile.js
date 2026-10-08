@@ -956,12 +956,6 @@ function PinInput({ value, onChangeText }) {
         />
       </Pressable>
 
-      <View style={styles.pinCounter}>
-        <Text style={styles.pinCounterText}>
-          {value.length}/4
-        </Text>
-      </View>
-
     </View>
   );
 }
@@ -1328,19 +1322,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
-  pinCounter: {
-    marginRight: 10,
-    paddingHorizontal: 7,
-    paddingVertical: 4,
-    borderRadius: 7,
-    backgroundColor: "#EEF2F7",
-  },
-
-  pinCounterText: {
-    fontSize: 9,
-    fontWeight: "700",
-    color: colors.textMuted,
-  },
+  
 
   /* =========================
      SECURITY NOTE

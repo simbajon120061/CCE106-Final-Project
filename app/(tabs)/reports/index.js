@@ -421,7 +421,6 @@ export default function ReportsScreen() {
       .then((stored) => {
         if (!current) return;
         setBackupScheduleLoading(true);
-      .then((stored) => {
         if (!stored || !current) return;
         const settings = JSON.parse(stored);
         setBackupSchedule(settings.schedule || "12");
