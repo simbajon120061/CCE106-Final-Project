@@ -42,13 +42,18 @@ export function AuthProvider({ children }) {
     await AsyncStorage.setItem(AUTH_KEY, JSON.stringify(userData));
   }
 
+  async function signup(userData) {
+    setUser(userData);
+    await AsyncStorage.setItem(AUTH_KEY, JSON.stringify(userData));
+  }
+
   async function logout() {
     setUser(null);
     await AsyncStorage.removeItem(AUTH_KEY);
   }
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout }}>
+    <AuthContext.Provider value={{ user, isLoading, login, signup, logout }}>
       {children}
     </AuthContext.Provider>
   );
