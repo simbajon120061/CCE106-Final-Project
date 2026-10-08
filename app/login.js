@@ -62,11 +62,7 @@ export default function LoginScreen() {
      LOAD SAVED PHONE
   ===================================================== */
 
-  useEffect(() => {
-    loadSavedPhone();
-  }, []);
-
-  const loadSavedPhone = async () => {
+  async function loadSavedPhone() {
     try {
       const phone =
         await AsyncStorage.getItem('lastPhone');
@@ -85,7 +81,13 @@ export default function LoginScreen() {
 
       setEnteringNewPhone(true);
     }
-  };
+  }
+
+  useEffect(() => {
+    // The async storage read updates state after its promise resolves.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadSavedPhone();
+  }, []);
 
   /* =====================================================
      ACTIVE PHONE
@@ -745,7 +747,7 @@ export default function LoginScreen() {
                 styles.bottomText
               }
             >
-              Don't have an account?
+              Don&apos;t have an account?
             </Text>
 
             <TouchableOpacity

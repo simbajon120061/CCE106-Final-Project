@@ -38,15 +38,19 @@ export default function NewDebtorScreen() {
   const db = useSQLiteContext();
   const router = useRouter();
   const { user } = useAuth();
+  const [draft] = useState(() => loadDebtorDraft());
+  const savedDraft = draft?.screen === "new" ? draft : null;
 
-  const [fullName, setFullName] = useState("");
-  const [contact, setContact] = useState("");
-  const [idNumber, setIdNumber] = useState("");
-  const [address, setAddress] = useState("");
-  const [notes, setNotes] = useState("");
-  const [creditLimit, setCreditLimit] = useState("");
-  const [profilePhotoUri, setProfilePhotoUri] = useState(null);
-  const [idPhotoUri, setIdPhotoUri] = useState(null);
+  const [fullName, setFullName] = useState(savedDraft?.fullName ?? "");
+  const [contact, setContact] = useState(savedDraft?.contact ?? "");
+  const [idNumber, setIdNumber] = useState(savedDraft?.idNumber ?? "");
+  const [address, setAddress] = useState(savedDraft?.address ?? "");
+  const [notes, setNotes] = useState(savedDraft?.notes ?? "");
+  const [creditLimit, setCreditLimit] = useState(savedDraft?.creditLimit ?? "");
+  const [profilePhotoUri, setProfilePhotoUri] = useState(
+    savedDraft?.profilePhotoUri ?? null
+  );
+  const [idPhotoUri, setIdPhotoUri] = useState(savedDraft?.idPhotoUri ?? null);
   const [saving, setSaving] = useState(false);
 
   function saveDraftFor(target) {
@@ -76,17 +80,8 @@ export default function NewDebtorScreen() {
   );
 
   useEffect(() => {
-    const draft = loadDebtorDraft();
-    if (!draft || draft.screen !== "new") return;
-
-    setFullName(draft.fullName ?? "");
-    setContact(draft.contact ?? "");
-    setIdNumber(draft.idNumber ?? "");
-    setAddress(draft.address ?? "");
-    setNotes(draft.notes ?? "");
-    setCreditLimit(draft.creditLimit ?? "");
-    setProfilePhotoUri(draft.profilePhotoUri ?? null);
-    setIdPhotoUri(draft.idPhotoUri ?? null);
+    if (!savedDraft) return;
+    let active = true;
 
     async function recoverPhoto() {
       if (Platform.OS === "android") {
@@ -95,8 +90,8 @@ export default function NewDebtorScreen() {
           const uri = pending?.find((r) => r?.assets?.[0]?.uri)
             ?.assets[0].uri;
 
-          if (uri) {
-            if (draft.target === "id") setIdPhotoUri(uri);
+          if (active && uri) {
+            if (savedDraft.target === "id") setIdPhotoUri(uri);
             else setProfilePhotoUri(uri);
           }
         } catch (error) {
@@ -107,7 +102,10 @@ export default function NewDebtorScreen() {
     }
 
     recoverPhoto();
-  }, []);
+    return () => {
+      active = false;
+    };
+  }, [savedDraft]);
 
   const handleSave = async () => {
     if (!fullName.trim()) {
@@ -120,6 +118,7 @@ export default function NewDebtorScreen() {
       return;
     }
 
+    setSaving(true);
     try {
       const id = await createDebtor(db, user.id, {
         full_name: fullName.trim(),
@@ -141,6 +140,8 @@ export default function NewDebtorScreen() {
         "Error",
         "Failed to create debtor. Please try again."
       );
+    } finally {
+      setSaving(false);
     }
   };
 

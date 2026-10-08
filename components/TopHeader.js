@@ -8,6 +8,7 @@ export default function TopHeader({
   subtitle,
   icon,
   showSettings = true,
+  showBack = false,
 }) {
   const router = useRouter();
 
@@ -18,6 +19,18 @@ export default function TopHeader({
       <View style={styles.circleSmall} />
 
       <View style={styles.content}>
+        {showBack ? (
+          <Pressable
+            style={styles.backBtn}
+            onPress={() => router.back()}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <Ionicons name="arrow-back" size={24} color={colors.white} />
+          </Pressable>
+        ) : null}
+
         {icon ? (
           <View style={styles.iconTile}>
             <Ionicons name={icon} size={26} color={colors.goldLight} />
@@ -130,5 +143,14 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255, 255, 255, 0.12)",
     alignItems: "center",
     justifyContent: "center",
+  },
+  backBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: radius.full,
+    backgroundColor: "rgba(255, 255, 255, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: spacing.sm,
   },
 });

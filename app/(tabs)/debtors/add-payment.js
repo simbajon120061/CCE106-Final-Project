@@ -37,7 +37,7 @@ export default function AddPaymentScreen() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    getDebtor(db, Number(debtorId), user?.id).then(setDebtor);
+    getDebtor(db, debtorId, user?.id).then(setDebtor);
   }, [db, debtorId, user?.id]);
 
   async function handleSave() {
@@ -45,6 +45,14 @@ export default function AddPaymentScreen() {
 
     if (!amt || amt <= 0) {
       Alert.alert("Invalid amount", "Enter an amount greater than zero.");
+      return;
+    }
+
+    if (amt > balance) {
+      Alert.alert(
+        "Payment exceeds balance",
+        `The outstanding utang is only ${formatCurrency(balance)}. Enter an amount that does not exceed the current balance.`
+      );
       return;
     }
 
@@ -58,7 +66,7 @@ export default function AddPaymentScreen() {
     try {
       await addPaymentTransaction(db, {
         userId: user?.id,
-        debtorId: Number(debtorId),
+        debtorId: String(debtorId),
         amount: amt,
         description: description.trim() || null,
         paymentMethod,
@@ -77,12 +85,20 @@ export default function AddPaymentScreen() {
       });
 
       router.back();
+    } catch (error) {
+      Alert.alert(
+        "Unable to save payment",
+        error?.message || "Please check the payment amount and try again."
+      );
     } finally {
       setSaving(false);
     }
   }
 
   const balance = debtor?.balance ?? 0;
+  const enteredAmount = Number(amount);
+  const paymentExceedsBalance =
+    Number.isFinite(enteredAmount) && enteredAmount > balance;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -183,13 +199,18 @@ export default function AddPaymentScreen() {
 
               <TextInput
                 value={amount}
-                onChangeText={setAmount}
+                onChangeText={(value) => setAmount(sanitizeAmount(value))}
                 keyboardType="decimal-pad"
                 placeholder="0.00"
                 placeholderTextColor={colors.textMuted}
                 style={styles.amountInput}
               />
             </View>
+            {paymentExceedsBalance ? (
+              <Text style={styles.amountWarning}>
+                Payment cannot exceed the outstanding balance of {formatCurrency(balance)}.
+              </Text>
+            ) : null}
           </Field>
 
           {/* QUICK PAYMENT */}
@@ -412,6 +433,15 @@ export default function AddPaymentScreen() {
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+function sanitizeAmount(value) {
+  // Keep the input non-negative and restrict it to a currency amount.
+  const numeric = value.replace(/[^0-9.]/g, "");
+  const [whole = "", ...decimalParts] = numeric.split(".");
+  return decimalParts.length
+    ? `${whole}.${decimalParts.join("").slice(0, 2)}`
+    : whole;
 }
 
 function Field({ label, children }) {
@@ -766,6 +796,13 @@ const styles = StyleSheet.create({
     color: colors.navy,
   },
 
+  amountWarning: {
+    color: "#B42318",
+    fontSize: 12,
+    fontWeight: "600",
+    lineHeight: 18,
+  },
+
   selectInput: {
     minHeight: 52,
     backgroundColor: colors.cream,
@@ -1001,4 +1038,3 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 });
-

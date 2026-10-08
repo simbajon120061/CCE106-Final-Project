@@ -33,22 +33,36 @@ export default function InventoryScreen() {
   const [stockFilter, setStockFilter] = useState("all");
 
   const load = useCallback(
-    async (q) => {
-      if (!user?.id) return;
+    async (q, isCurrent = () => true) => {
+      if (!user?.id) {
+        if (isCurrent()) setProducts([]);
+        return;
+      }
 
-      const rows = await getProducts(
-        db,
-        user.id,
-        q?.trim() || undefined
-      );
-      setProducts(rows);
+      try {
+        const rows = await getProducts(
+          db,
+          user.id,
+          q?.trim() || undefined
+        );
+        if (isCurrent()) setProducts(rows);
+      } catch (error) {
+        // A failed refresh should not leave an unhandled rejection when this
+        // screen receives focus. Keep the existing list visible instead.
+        console.error("Could not load products", error);
+      }
     },
-    [db, user?.id]
+    [db, user]
   );
 
   useFocusEffect(
     useCallback(() => {
-      load(query);
+      let current = true;
+      load(query, () => current);
+
+      return () => {
+        current = false;
+      };
     }, [load, query])
   );
 
@@ -109,10 +123,7 @@ export default function InventoryScreen() {
 
             <TextInput
               value={query}
-              onChangeText={(t) => {
-                setQuery(t);
-                load(t);
-              }}
+              onChangeText={setQuery}
               placeholder="Search products"
               placeholderTextColor={colors.textMuted}
               style={styles.searchInput}
@@ -122,7 +133,6 @@ export default function InventoryScreen() {
               <Pressable
                 onPress={() => {
                   setQuery("");
-                  load("");
                 }}
                 hitSlop={8}
                 style={styles.clearButton}
@@ -883,4 +893,3 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.94 }],
   },
 });
-

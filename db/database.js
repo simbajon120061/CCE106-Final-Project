@@ -1,5 +1,7 @@
 // db/database.js
-const DB_VERSION = 8;
+import { scheduleCloudSync } from "@/db/cloudSync";
+
+const DB_VERSION = 13;
 
 /**
  * Runs once when the SQLiteProvider mounts. Creates tables if they don't
@@ -13,6 +15,7 @@ export async function updateUserProfile(db, { id, storeName, phoneNumber }) {
       `UPDATE users SET store_name = ?, phone_number = ?, email = ? WHERE id = ?`,
       [storeName, phoneNumber, phoneNumber, id]
     );
+    scheduleCloudSync(db, id);
     return;
   }
 
@@ -20,6 +23,7 @@ export async function updateUserProfile(db, { id, storeName, phoneNumber }) {
     `UPDATE users SET store_name = ?, phone_number = ? WHERE id = ?`,
     [storeName, phoneNumber, id]
   );
+  scheduleCloudSync(db, id);
 }
 
 export async function updateUserPin(db, { id, newPin }) {
@@ -65,6 +69,36 @@ async function ensureUserAuthColumns(db) {
   );
 }
 
+async function ensureUserCloudColumns(db) {
+  if (!(await userColumnExists(db, "firebase_uid"))) {
+    await db.execAsync(`ALTER TABLE users ADD COLUMN firebase_uid TEXT;`);
+  }
+
+  await db.execAsync(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_firebase_uid
+     ON users(firebase_uid) WHERE firebase_uid IS NOT NULL;`
+  );
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS cloud_sync_deletions (
+      user_id INTEGER NOT NULL,
+      collection_name TEXT NOT NULL
+        CHECK (collection_name IN ('debtors', 'products', 'sales', 'transactions')),
+      record_id TEXT NOT NULL,
+      PRIMARY KEY (user_id, collection_name, record_id)
+    );
+  `);
+}
+
+async function recordCloudDeletion(db, userId, collectionName, recordId) {
+  if (userId == null) return;
+  await db.runAsync(
+    `INSERT OR IGNORE INTO cloud_sync_deletions
+       (user_id, collection_name, record_id)
+     VALUES (?, ?, ?)`,
+    [userId, collectionName, String(recordId)]
+  );
+}
+
 async function debtorColumnExists(db, columnName) {
   const columns = await db.getAllAsync("PRAGMA table_info(debtors)");
   return columns.some((column) => column.name === columnName);
@@ -88,6 +122,49 @@ async function ensureDebtorProfileColumns(db) {
       `ALTER TABLE debtors ADD COLUMN id_photo_uri TEXT;`
     );
   }
+}
+
+async function ensureDebtorDeletionColumn(db) {
+  if (!(await debtorColumnExists(db, "deleted_at"))) {
+    await db.execAsync(`ALTER TABLE debtors ADD COLUMN deleted_at TEXT;`);
+  }
+
+  await db.execAsync(
+    `CREATE INDEX IF NOT EXISTS idx_debtors_active_user
+     ON debtors(user_id, deleted_at);`
+  );
+}
+
+async function ensureCloudSyncDeletionCollections(db) {
+  const table = await db.getFirstAsync(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='cloud_sync_deletions'"
+  );
+  if (!table) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS cloud_sync_deletions (
+        user_id INTEGER NOT NULL,
+        collection_name TEXT NOT NULL
+          CHECK (collection_name IN ('debtors', 'products', 'sales', 'transactions')),
+        record_id TEXT NOT NULL,
+        PRIMARY KEY (user_id, collection_name, record_id)
+      );
+    `);
+    return;
+  }
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS cloud_sync_deletions_next (
+      user_id INTEGER NOT NULL,
+      collection_name TEXT NOT NULL
+        CHECK (collection_name IN ('debtors', 'products', 'sales', 'transactions')),
+      record_id TEXT NOT NULL,
+      PRIMARY KEY (user_id, collection_name, record_id)
+    );
+    INSERT OR IGNORE INTO cloud_sync_deletions_next
+      (user_id, collection_name, record_id)
+      SELECT user_id, collection_name, record_id FROM cloud_sync_deletions;
+    DROP TABLE cloud_sync_deletions;
+    ALTER TABLE cloud_sync_deletions_next RENAME TO cloud_sync_deletions;
+  `);
 }
 
 async function ensureSalesTables(db) {
@@ -299,15 +376,31 @@ export async function migrateDbIfNeeded(db) {
     currentVersion = 8;
   }
 
-await db.execAsync(`PRAGMA user_version = ${DB_VERSION}`);
+  if (currentVersion < 11) {
+    await ensureUserCloudColumns(db);
+    currentVersion = 11;
+  }
+
+  if (currentVersion < 12) {
+    await ensureDebtorDeletionColumn(db);
+    currentVersion = 12;
+  }
+
+  if (currentVersion < 13) {
+    await ensureCloudSyncDeletionCollections(db);
+    currentVersion = 13;
+  }
+
+  await ensureUserCloudColumns(db);
+  await db.execAsync(`PRAGMA user_version = ${DB_VERSION}`);
 }
 
 /* ----------------------------- Debtors ----------------------------- */
 
 export async function getDebtors(db, userId, search) {
   const where = search
-    ? `WHERE d.user_id = ? AND d.full_name LIKE ?`
-    : `WHERE d.user_id = ?`;
+    ? `WHERE d.user_id = ? AND d.deleted_at IS NULL AND d.full_name LIKE ?`
+    : `WHERE d.user_id = ? AND d.deleted_at IS NULL`;
 
   const args = search
     ? [userId, `%${search}%`]
@@ -338,7 +431,7 @@ export async function getDebtor(db, id, userId) {
          COALESCE(SUM(CASE WHEN t.type = 'credit' THEN t.amount ELSE -t.amount END), 0) AS balance
        FROM debtors d
        LEFT JOIN transactions t ON t.debtor_id = d.id
-       WHERE d.id = ?
+       WHERE d.id = ? AND d.deleted_at IS NULL
        GROUP BY d.id`,
       [id]
     );
@@ -349,7 +442,7 @@ export async function getDebtor(db, id, userId) {
        COALESCE(SUM(CASE WHEN t.type = 'credit' THEN t.amount ELSE -t.amount END), 0) AS balance
      FROM debtors d
      LEFT JOIN transactions t ON t.debtor_id = d.id
-     WHERE d.id = ? AND d.user_id = ?
+     WHERE d.id = ? AND d.user_id = ? AND d.deleted_at IS NULL
      GROUP BY d.id`,
     [id, userId]
   );
@@ -379,10 +472,15 @@ export async function createDebtor(db, userId, data) {
     ]
   );
 
+  scheduleCloudSync(db, userId);
   return res.lastInsertRowId;
 }
 
 export async function updateDebtor(db, id, data) {
+  const owner = await db.getFirstAsync(
+    "SELECT user_id FROM debtors WHERE id = ?",
+    [id]
+  );
   await db.runAsync(
     `UPDATE debtors
      SET full_name = ?,
@@ -404,6 +502,7 @@ export async function updateDebtor(db, id, data) {
       id,
     ]
   );
+  scheduleCloudSync(db, owner?.user_id);
 }
 
 export async function deleteDebtor(db, id, userId) {
@@ -461,17 +560,18 @@ export async function deleteDebtor(db, id, userId) {
     );
   }
 
-  // Delete the debtor.
-  // Transactions are automatically deleted because
-  // transactions.debtor_id uses ON DELETE CASCADE.
-  await db.runAsync(
-    `
-    DELETE FROM debtors
-    WHERE id = ? AND user_id = ?
-    `,
-    [id, userId]
-  );
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      // Keep the debtor row and linked transactions for report history.
+      // Active debtor queries exclude soft-deleted rows.
+      `UPDATE debtors
+       SET deleted_at = datetime('now')
+       WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+      [id, userId]
+    );
+  });
 
+  scheduleCloudSync(db, userId);
   return true;
 }
 
@@ -523,30 +623,67 @@ export async function addCreditTransaction(db, params) {
       );
     }
   });
+  scheduleCloudSync(db, params.userId);
 }
 
 export async function addPaymentTransaction(db, params) {
+  const amount = Number(params.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error("Payment amount must be greater than zero.");
+  }
+
+  const balanceResult = await db.getFirstAsync(
+    `SELECT COALESCE(SUM(CASE WHEN type = 'credit' THEN amount ELSE -amount END), 0) AS balance
+     FROM transactions WHERE debtor_id = ?`,
+    [params.debtorId]
+  );
+  if (amount > Number(balanceResult?.balance || 0)) {
+    throw new Error("Payment cannot exceed the debtor's outstanding balance.");
+  }
+
   await db.runAsync(
     `INSERT INTO transactions (user_id, debtor_id, type, amount, description) 
      VALUES (?, ?, 'payment', ?, ?)`,
-    [params.userId ?? null, params.debtorId, params.amount, params.description ?? null]
+    [params.userId ?? null, params.debtorId, amount, params.description ?? null]
+  );
+  scheduleCloudSync(db, params.userId);
+}
+
+async function ensureCloudSyncColumns(db) {
+  const cols = await db.getAllAsync("PRAGMA table_info(products)");
+  if (!cols.some((column) => column.name === "cloud_id")) {
+    await db.execAsync(`ALTER TABLE products ADD COLUMN cloud_id TEXT;`);
+  }
+  await db.execAsync(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_products_cloud_id
+     ON products(cloud_id) WHERE cloud_id IS NOT NULL;`
   );
 }
 
 export async function deleteTransaction(db, id) {
-  await db.runAsync(`DELETE FROM transactions WHERE id = ?`, [id]);
+  const owner = await db.getFirstAsync(
+    "SELECT user_id FROM transactions WHERE id = ?",
+    [id]
+  );
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(`DELETE FROM transactions WHERE id = ?`, [id]);
+    await recordCloudDeletion(db, owner?.user_id, "transactions", id);
+  });
+  scheduleCloudSync(db, owner?.user_id);
 }
 
 /* ----------------------------- Products ------------------------------ */
 
 export async function getProducts(db, userId, search) {
+  // Include legacy products created before account ownership was added. This
+  // keeps existing local inventory visible after upgrading the app.
+  const ownership = userId == null ? "" : "(user_id = ? OR user_id IS NULL)";
   const where = search
-    ? `WHERE user_id = ? AND name LIKE ?`
-    : `WHERE user_id = ?`;
-
-  const args = search
-    ? [userId, `%${search}%`]
-    : [userId];
+    ? `WHERE ${ownership}${ownership ? " AND " : ""}name LIKE ?`
+    : ownership ? `WHERE ${ownership}` : "";
+  const args = userId == null
+    ? (search ? [`%${search}%`] : [])
+    : (search ? [userId, `%${search}%`] : [userId]);
 
   return db.getAllAsync(
     `SELECT * FROM products
@@ -558,23 +695,33 @@ export async function getProducts(db, userId, search) {
 
 export async function getProduct(db, userId, id) {
   return db.getFirstAsync(
-    `SELECT * FROM products WHERE id = ? AND user_id = ?`,
+    // Match the list query: records created before product ownership was
+    // introduced remain usable after an app upgrade.
+    `SELECT * FROM products
+     WHERE id = ? AND (user_id = ? OR user_id IS NULL)`,
     [id, userId]
   );
 }
 
 export async function createProduct(db, userId, data) {
   const res = await db.runAsync(
-    `INSERT INTO products (user_id, name, category, unit_price, stock_quantity, low_stock_threshold) VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO products (
+      user_id, name, category, unit, measurement_value, unit_price, item_price,
+      stock_quantity, low_stock_threshold
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       userId,
       data.name,
       data.category,
+      data.unit ?? "piece",
+      data.measurement_value ?? null,
       data.unit_price,
+      data.item_price ?? null,
       data.stock_quantity,
       data.low_stock_threshold,
     ]
   );
+  scheduleCloudSync(db, userId);
   return res.lastInsertRowId;
 }
 
@@ -583,8 +730,8 @@ export async function updateProduct(db, userId, id, data) {
     `UPDATE products
      SET name = ?, category = ?, unit = ?, measurement_value = ?,
          unit_price = ?, item_price = ?,
-         stock_quantity = ?, low_stock_threshold = ?
-     WHERE id = ? AND user_id = ?`,
+         stock_quantity = ?, low_stock_threshold = ?, user_id = ?
+     WHERE id = ? AND (user_id = ? OR user_id IS NULL)`,
     [
       data.name,
       data.category,
@@ -594,23 +741,35 @@ export async function updateProduct(db, userId, id, data) {
       data.item_price ?? null,
       data.stock_quantity,
       data.low_stock_threshold,
+      userId,
       id,
       userId,
     ]
   );
+  scheduleCloudSync(db, userId);
 }
 
 export async function deleteProduct(db, userId, id) {
-  await db.runAsync(
-    `DELETE FROM products WHERE id = ? AND user_id = ?`,
-    [id, userId]
-  );
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `DELETE FROM products
+       WHERE id = ? AND (user_id = ? OR user_id IS NULL)`,
+      [id, userId]
+    );
+    await recordCloudDeletion(db, userId, "products", id);
+  });
+  scheduleCloudSync(db, userId);
 }
 export async function adjustStock(db, id, delta) {
+  const owner = await db.getFirstAsync(
+    "SELECT user_id FROM products WHERE id = ?",
+    [id]
+  );
   await db.runAsync(
     `UPDATE products SET stock_quantity = MAX(stock_quantity + ?, 0) WHERE id = ?`,
     [delta, id]
   );
+  scheduleCloudSync(db, owner?.user_id);
 }
 
 /* ------------------------------- Sales ------------------------------- */
@@ -630,7 +789,8 @@ export async function createSale(db, userId, { saleType, debtorId = null, items 
     0
   );
 
-  return db.withTransactionAsync(async () => {
+  let saleId;
+  await db.withTransactionAsync(async () => {
     for (const item of normalizedItems) {
       const product = await getProduct(db, userId, Number(item.product.id));
       if (!product) {
@@ -648,7 +808,7 @@ export async function createSale(db, userId, { saleType, debtorId = null, items 
       `INSERT INTO sales ( user_id,debtor_id, sale_type, total_amount) VALUES (?, ?, ?, ?)`,
       [userId,saleType === "credit" ? debtorId : null, saleType, total]
     );
-    const saleId = sale.lastInsertRowId;
+    saleId = sale.lastInsertRowId;
 
     for (const item of normalizedItems) {
       const product = item.product;
@@ -676,6 +836,9 @@ export async function createSale(db, userId, { saleType, debtorId = null, items 
 
     return saleId;
   });
+
+  scheduleCloudSync(db, userId);
+  return saleId;
 }
 
 export async function getDebtorOptions(db, userId) {
@@ -684,7 +847,7 @@ export async function getDebtorOptions(db, userId) {
       COALESCE(SUM(CASE WHEN t.type = 'credit' THEN t.amount ELSE -t.amount END), 0) AS balance
      FROM debtors d
      LEFT JOIN transactions t ON t.debtor_id = d.id
-     WHERE d.user_id = ?
+     WHERE d.user_id = ? AND d.deleted_at IS NULL
      GROUP BY d.id
      ORDER BY d.full_name ASC`,
     [userId]
@@ -773,7 +936,7 @@ export async function getUnpaidBalances(db, userId) {
     `SELECT d.*, COALESCE(SUM(CASE WHEN t.type = 'credit' THEN t.amount ELSE -t.amount END), 0) AS balance
      FROM debtors d
      LEFT JOIN transactions t ON t.debtor_id = d.id
-     WHERE d.user_id = ?
+     WHERE d.user_id = ? AND d.deleted_at IS NULL
      GROUP BY d.id
      HAVING balance > 0
      ORDER BY balance DESC`,
@@ -826,7 +989,10 @@ export async function getTransactionHistory(db, userId, days = 7) {
         s.sale_type AS type,
         s.total_amount AS amount,
         datetime(s.created_at, 'localtime') AS date,
-        d.full_name AS debtor_name
+        CASE
+          WHEN s.debtor_id IS NULL THEN NULL
+          ELSE COALESCE(d.full_name, 'Deleted debtor')
+        END AS debtor_name
       FROM sales s
       LEFT JOIN debtors d ON d.id = s.debtor_id
       WHERE s.user_id = ?
@@ -838,22 +1004,115 @@ export async function getTransactionHistory(db, userId, days = 7) {
         'payment' AS type,
         t.amount AS amount,
         datetime(t.created_at, 'localtime') AS date,
-        d.full_name AS debtor_name
+        COALESCE(d.full_name, 'Deleted debtor') AS debtor_name
       FROM transactions t
-      JOIN debtors d ON d.id = t.debtor_id
+      LEFT JOIN debtors d ON d.id = t.debtor_id
       WHERE t.user_id = ? AND t.type = 'payment'
         AND date(t.created_at, 'localtime') >= date('now', 'localtime', ?)
       ORDER BY date DESC`,
     [userId, `-${days} days`, userId, `-${days} days`]
   );
 }
-export async function exportAllData(db) {
+
+export async function clearHistory(db, userId) {
+  if (userId == null) {
+    throw new Error("User is not logged in.");
+  }
+
+  const [sales, transactions] = await Promise.all([
+    db.getAllAsync("SELECT id FROM sales WHERE user_id = ?", [userId]),
+    db.getAllAsync("SELECT id FROM transactions WHERE user_id = ?", [userId]),
+  ]);
+
+  await db.withTransactionAsync(async () => {
+    for (const sale of sales) {
+      await recordCloudDeletion(db, userId, "sales", sale.id);
+    }
+    for (const transaction of transactions) {
+      await recordCloudDeletion(db, userId, "transactions", transaction.id);
+    }
+
+    // Deleting sales also removes their sale_items via the existing cascade.
+    await db.runAsync("DELETE FROM sales WHERE user_id = ?", [userId]);
+    await db.runAsync("DELETE FROM transactions WHERE user_id = ?", [userId]);
+  });
+
+  scheduleCloudSync(db, userId);
+}
+
+export async function deleteHistoryEntry(db, userId, entryId) {
+  if (userId == null) {
+    throw new Error("User is not logged in.");
+  }
+
+  const [kind, rawId] = String(entryId).split("-", 2);
+  const id = Number(rawId);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    throw new Error("Invalid history entry.");
+  }
+
+  await db.withTransactionAsync(async () => {
+    if (kind === "sale") {
+      const sale = await db.getFirstAsync(
+        "SELECT id, sale_type FROM sales WHERE id = ? AND user_id = ?",
+        [id, userId]
+      );
+      if (!sale) throw new Error("Sale record not found.");
+
+      await recordCloudDeletion(db, userId, "sales", id);
+      await db.runAsync("DELETE FROM sales WHERE id = ? AND user_id = ?", [id, userId]);
+
+      // Credit sales create a matching debtor transaction. Remove it too so
+      // report totals and debtor balances remain accurate.
+      if (sale.sale_type === "credit") {
+        const credits = await db.getAllAsync(
+          `SELECT id FROM transactions
+           WHERE user_id = ? AND type = 'credit' AND description = ?`,
+          [userId, `Credit sale #${id}`]
+        );
+        for (const credit of credits) {
+          await recordCloudDeletion(db, userId, "transactions", credit.id);
+          await db.runAsync("DELETE FROM transactions WHERE id = ? AND user_id = ?", [credit.id, userId]);
+        }
+      }
+      return;
+    }
+
+    if (kind === "payment") {
+      const payment = await db.getFirstAsync(
+        "SELECT id FROM transactions WHERE id = ? AND user_id = ? AND type = 'payment'",
+        [id, userId]
+      );
+      if (!payment) throw new Error("Payment record not found.");
+
+      await recordCloudDeletion(db, userId, "transactions", id);
+      await db.runAsync("DELETE FROM transactions WHERE id = ? AND user_id = ?", [id, userId]);
+      return;
+    }
+
+    throw new Error("Unsupported history entry.");
+  });
+
+  scheduleCloudSync(db, userId);
+}
+
+export async function exportAllData(db, userId) {
+  const owned = userId == null ? "" : " WHERE user_id = ?";
+  const ownedArgs = userId == null ? [] : [userId];
   const [debtors, products, sales, saleItems, transactions] = await Promise.all([
-    db.getAllAsync(`SELECT * FROM debtors ORDER BY full_name ASC`),
-    db.getAllAsync(`SELECT * FROM products ORDER BY name ASC`),
-    db.getAllAsync(`SELECT * FROM sales ORDER BY created_at DESC`),
-    db.getAllAsync(`SELECT * FROM sale_items ORDER BY sale_id DESC`),
-    db.getAllAsync(`SELECT * FROM transactions ORDER BY created_at DESC`),
+    db.getAllAsync(`SELECT * FROM debtors${owned} ORDER BY full_name ASC`, ownedArgs),
+    db.getAllAsync(`SELECT * FROM products${owned} ORDER BY name ASC`, ownedArgs),
+    db.getAllAsync(`SELECT * FROM sales${owned} ORDER BY created_at DESC`, ownedArgs),
+    userId == null
+      ? db.getAllAsync(`SELECT * FROM sale_items ORDER BY sale_id DESC`)
+      : db.getAllAsync(
+          `SELECT si.* FROM sale_items si
+           INNER JOIN sales s ON s.id = si.sale_id
+           WHERE s.user_id = ?
+           ORDER BY si.sale_id DESC`,
+          ownedArgs
+        ),
+    db.getAllAsync(`SELECT * FROM transactions${owned} ORDER BY created_at DESC`, ownedArgs),
   ]);
 
   return {
@@ -864,6 +1123,21 @@ export async function exportAllData(db) {
     sale_items: saleItems,
     transactions,
   };
+}
+
+export async function getFirebaseUidForUser(db, userId) {
+  const user = await db.getFirstAsync(
+    `SELECT firebase_uid FROM users WHERE id = ?`,
+    [userId]
+  );
+  return user?.firebase_uid ?? null;
+}
+
+export async function setFirebaseUidForUser(db, userId, firebaseUid) {
+  await db.runAsync(
+    `UPDATE users SET firebase_uid = ? WHERE id = ?`,
+    [firebaseUid, userId]
+  );
 }
 
 export async function createUser(db, { phoneNumber, pin, storeName }) {
@@ -886,13 +1160,25 @@ export async function createUser(db, { phoneNumber, pin, storeName }) {
 }
 
 export async function getUserByPhone(db, phoneNumber) {
+  const normalizedPhone = String(phoneNumber).replace(/\D/g, "");
+  let alternatePhone = normalizedPhone;
+  if (normalizedPhone.startsWith("63")) {
+    alternatePhone = `0${normalizedPhone.slice(2)}`;
+  } else if (normalizedPhone.startsWith("0")) {
+    alternatePhone = `63${normalizedPhone.slice(1)}`;
+  }
+
   const hasEmailColumn = await userColumnExists(db, "email");
   if (hasEmailColumn) {
     return db.getFirstAsync(
-      `SELECT * FROM users WHERE phone_number = ? OR email = ?`,
-      [phoneNumber, phoneNumber]
+      `SELECT * FROM users
+       WHERE phone_number IN (?, ?) OR email IN (?, ?)`,
+      [normalizedPhone, alternatePhone, normalizedPhone, alternatePhone]
     );
   }
 
-  return db.getFirstAsync(`SELECT * FROM users WHERE phone_number = ?`, [phoneNumber]);
+  return db.getFirstAsync(
+    `SELECT * FROM users WHERE phone_number IN (?, ?)`,
+    [normalizedPhone, alternatePhone]
+  );
 }

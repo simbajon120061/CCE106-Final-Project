@@ -4,7 +4,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, spacing, typography, radius } from "@/constants/theme";
+import { colors, spacing, radius } from "@/constants/theme";
 import { useAuth } from "@/context/AuthContext";
 import TopHeader from "@/components/TopHeader";
 import { formatCurrency } from "@/lib/format";
@@ -136,7 +136,7 @@ export default function DashboardScreen() {
         {/* DATE / WELCOME AREA */}
         <View style={styles.welcomeArea}>
           <View>
-            <Text style={styles.welcomeSmall}>TODAY'S OVERVIEW</Text>
+            <Text style={styles.welcomeSmall}>TODAY&apos;S OVERVIEW</Text>
             <Text style={styles.dateText}>{todayLabel}</Text>
           </View>
 

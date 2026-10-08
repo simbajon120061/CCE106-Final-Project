@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Slot, useRouter, useSegments } from "expo-router";
 import { SQLiteProvider, useSQLiteContext } from "expo-sqlite";
 import { View, ActivityIndicator } from "react-native";
@@ -6,43 +6,19 @@ import { View, ActivityIndicator } from "react-native";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { migrateDbIfNeeded } from "@/db/database";
 import { colors } from "@/constants/theme";
-import { loadDebtorDraft } from "@/lib/debtorDraft";
+import { getFirebaseAuth } from "@/firebaseConfig";
+import {
+  scheduleCloudSync,
+  watchCloudSyncOnForeground,
+} from "@/db/cloudSync";
 
 function InitialLayout() {
   const { user, isLoading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
-  const db = useSQLiteContext();
-  const [hasRegisteredUser, setHasRegisteredUser] = useState(null);
 
   useEffect(() => {
-    let isActive = true;
-
-    async function checkForRegisteredUser() {
-      try {
-        const result = await db.getFirstAsync(
-          "SELECT COUNT(*) AS count FROM users"
-        );
-        if (isActive) {
-          setHasRegisteredUser(Number(result?.count) > 0);
-        }
-      } catch (error) {
-        console.error("Failed to check registered users", error);
-        if (isActive) {
-          setHasRegisteredUser(true);
-        }
-      }
-    }
-
-    checkForRegisteredUser();
-
-    return () => {
-      isActive = false;
-    };
-  }, [db]);
-
-  useEffect(() => {
-    if (isLoading || hasRegisteredUser === null) return;
+    if (isLoading) return;
 
     const inAuthGroup =
       segments[0] === "login" ||
@@ -53,11 +29,11 @@ function InitialLayout() {
   if (user && (inAuthGroup || isWelcomeScreen)) {
     router.replace("/home/dashboard");
     } else if (!user && !inAuthGroup && !isWelcomeScreen) {
-      router.replace(hasRegisteredUser ? "/login" : "/signup");
+    router.replace("/login");
     }
-  }, [user, isLoading, hasRegisteredUser, segments, router]);
+  }, [user, isLoading, segments, router]);
 
-  if (isLoading || hasRegisteredUser === null) {
+  if (isLoading) {
     return (
       <View style={styles.loading}>
         <ActivityIndicator
@@ -71,6 +47,27 @@ function InitialLayout() {
   return <Slot />;
 }
 
+function CloudSyncBridge() {
+  const db = useSQLiteContext();
+  const { user } = useAuth();
+
+  useEffect(() => {
+    if (!user?.id) return undefined;
+
+    const schedule = () => scheduleCloudSync(db, user.id);
+    schedule();
+    const unsubscribe = getFirebaseAuth().onAuthStateChanged(schedule);
+    const stopWatchingForeground = watchCloudSyncOnForeground(db, user.id);
+
+    return () => {
+      unsubscribe();
+      stopWatchingForeground();
+    };
+  }, [db, user?.id]);
+
+  return null;
+}
+
 export default function RootLayout() {
   return (
     <SQLiteProvider
@@ -78,6 +75,7 @@ export default function RootLayout() {
       onInit={migrateDbIfNeeded}
     >
       <AuthProvider>
+        <CloudSyncBridge />
         <InitialLayout />
       </AuthProvider>
     </SQLiteProvider>

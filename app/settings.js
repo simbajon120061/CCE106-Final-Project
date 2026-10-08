@@ -5,23 +5,217 @@ import {
   ScrollView,
   Pressable,
   Modal,
+  TextInput,
 } from "react-native";
 
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSQLiteContext } from "expo-sqlite";
 
 import Card from "@/components/Card";
 import { colors, spacing, radius } from "@/constants/theme";
 import { useAuth } from "@/context/AuthContext";
 import TopHeader from "@/components/TopHeader";
+import { getFirebaseAuth } from "@/firebaseConfig";
+import {
+  getFirebaseUidForUser,
+  setFirebaseUidForUser,
+} from "@/db/database";
+import {
+  cancelCloudSync,
+  getCloudSyncState,
+  retryCloudSync,
+  subscribeCloudSync,
+  syncLinkedStore,
+} from "@/db/cloudSync";
 
 export default function SettingsScreen() {
+  const db = useSQLiteContext();
   const router = useRouter();
   const { user, logout } = useAuth();
 
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
+  const [cloudModalVisible, setCloudModalVisible] = useState(false);
+  const [cloudEmail, setCloudEmail] = useState("");
+  const [cloudPassword, setCloudPassword] = useState("");
+  const [cloudBusy, setCloudBusy] = useState(false);
+  const [cloudCancelRequested, setCloudCancelRequested] = useState(false);
+  const [cloudFeedback, setCloudFeedback] = useState(null);
+  const cloudCancelRequestedRef = useRef(false);
+  const [cloudUser, setCloudUser] = useState(getFirebaseAuth().currentUser);
+  const [linkedFirebaseUid, setLinkedFirebaseUid] = useState(null);
+  const [linkedLocalUserId, setLinkedLocalUserId] = useState(null);
+  const [cloudSyncState, setCloudSyncState] = useState(() =>
+    getCloudSyncState(user?.id)
+  );
+  const firebaseAuth = getFirebaseAuth();
+  const linkedFirebaseUidForUser =
+    linkedLocalUserId === user?.id ? linkedFirebaseUid : null;
+  const cloudOperationActive =
+    cloudBusy ||
+    cloudSyncState.status === "queued" ||
+    cloudSyncState.status === "syncing" ||
+    cloudSyncState.status === "cancelling";
+  const cloudCancelPending =
+    cloudCancelRequested &&
+    (cloudBusy || cloudSyncState.status === "cancelling");
+
+  useEffect(() => {
+    return firebaseAuth.onAuthStateChanged(setCloudUser);
+  }, [firebaseAuth]);
+
+  useEffect(() => {
+    return subscribeCloudSync((localUserId, state) => {
+      if (String(localUserId) === String(user?.id)) {
+        setCloudSyncState(state);
+      }
+    });
+  }, [user?.id]);
+
+  useEffect(() => {
+    let active = true;
+    if (!user?.id) return undefined;
+
+    getFirebaseUidForUser(db, user.id)
+      .then((uid) => {
+        if (active) {
+          setLinkedFirebaseUid(uid);
+          setLinkedLocalUserId(user.id);
+        }
+      })
+      .catch((error) => {
+        console.error("Could not load linked cloud account:", error);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [db, user?.id]);
+
+  async function backUpToCloud(firebaseUser) {
+    throwIfCloudBackupCancelled(cloudCancelRequestedRef);
+    if (!user?.id) {
+      throw new Error("Log in to a local store account before cloud backup.");
+    }
+
+    const linkedUid = await getFirebaseUidForUser(db, user.id);
+    throwIfCloudBackupCancelled(cloudCancelRequestedRef);
+    if (linkedUid && linkedUid !== firebaseUser.uid) {
+      throw new Error(
+        "This local store is linked to a different Firebase account. Sign in with that email address."
+      );
+    }
+    if (!linkedUid) {
+      await setFirebaseUidForUser(db, user.id, firebaseUser.uid);
+      setLinkedFirebaseUid(firebaseUser.uid);
+      setLinkedLocalUserId(user.id);
+    }
+
+    throwIfCloudBackupCancelled(cloudCancelRequestedRef);
+    const result = await syncLinkedStore(db, user.id);
+    if (result.status === "cancelled") {
+      throw createCloudBackupCancelledError();
+    }
+    if (result.status !== "synced") {
+      throw new Error(
+        result.message ||
+          "Firebase is connected, but the local store has not synced yet."
+      );
+    }
+    return result;
+  }
+
+  function cancelCloudBackup() {
+    if (!cloudOperationActive || cloudCancelRequestedRef.current) return;
+    cloudCancelRequestedRef.current = true;
+    setCloudCancelRequested(true);
+    if (user?.id) cancelCloudSync(user.id);
+  }
+
+  async function handleCloudBackup() {
+    if (cloudOperationActive) {
+      cancelCloudBackup();
+      return;
+    }
+    if (!cloudUser || linkedFirebaseUidForUser !== cloudUser.uid) {
+      setCloudFeedback(null);
+      setCloudModalVisible(true);
+      return;
+    }
+
+    cloudCancelRequestedRef.current = false;
+    setCloudCancelRequested(false);
+    setCloudBusy(true);
+    setCloudFeedback(null);
+    try {
+      const result = await backUpToCloud(cloudUser);
+      setCloudFeedback({
+        type: "success",
+        message: getCloudBackupSummary(result),
+      });
+    } catch (error) {
+      if (error?.code !== "cloud-sync/cancelled") {
+        console.error("Cloud backup failed:", error);
+      }
+      setCloudFeedback({
+        type: error?.code === "cloud-sync/cancelled" ? "status" : "error",
+        message: getCloudErrorMessage(error),
+      });
+    } finally {
+      setCloudBusy(false);
+      cloudCancelRequestedRef.current = false;
+      setCloudCancelRequested(false);
+    }
+  }
+
+  async function handleCloudAuth(action) {
+    const email = cloudEmail.trim().toLowerCase();
+    if (!email || !cloudPassword) {
+      setCloudFeedback({
+        type: "error",
+        message: "Enter your email and password.",
+      });
+      return;
+    }
+
+    cloudCancelRequestedRef.current = false;
+    setCloudCancelRequested(false);
+    setCloudBusy(true);
+    setCloudFeedback(null);
+    try {
+      const credentials =
+        action === "create"
+          ? await firebaseAuth.createUserWithEmailAndPassword(
+              email,
+              cloudPassword
+            )
+          : await firebaseAuth.signInWithEmailAndPassword(
+              email,
+              cloudPassword
+            );
+      const result = await backUpToCloud(credentials.user);
+      setCloudModalVisible(false);
+      setCloudPassword("");
+      setCloudFeedback({
+        type: "success",
+        message: getCloudBackupSummary(result),
+      });
+    } catch (error) {
+      if (error?.code !== "cloud-sync/cancelled") {
+        console.error("Firebase sign-in or backup failed:", error);
+      }
+      setCloudFeedback({
+        type: error?.code === "cloud-sync/cancelled" ? "status" : "error",
+        message: getCloudErrorMessage(error),
+      });
+    } finally {
+      setCloudBusy(false);
+      cloudCancelRequestedRef.current = false;
+      setCloudCancelRequested(false);
+    }
+  }
 
   function openLogoutModal() {
     setLogoutModalVisible(true);
@@ -51,6 +245,7 @@ export default function SettingsScreen() {
         title="Settings"
         subtitle="Account Preferences"
         showSettings={false}
+        showBack
       />
 
       <ScrollView
@@ -205,6 +400,132 @@ export default function SettingsScreen() {
               Keep your store information up to date.
             </Text>
           </View>
+        </Card>
+
+        <View style={styles.sectionHeaderRow}>
+          <View style={styles.sectionIcon}>
+            <Ionicons
+              name="cloud-upload-outline"
+              size={17}
+              color={colors.gold}
+            />
+          </View>
+
+          <View style={styles.sectionHeadingText}>
+            <Text style={styles.sectionTitle}>Optional Cloud Backup</Text>
+            <Text style={styles.sectionSubtitle}>
+              SQLite stays on this device as your source of truth
+            </Text>
+          </View>
+        </View>
+
+        <Card style={styles.cloudCard}>
+          <View style={styles.cloudHeading}>
+            <Ionicons
+              name="cloud-outline"
+              size={24}
+              color={colors.navy}
+            />
+            <View style={styles.cloudCopy}>
+              <Text style={styles.cloudTitle}>
+                {linkedFirebaseUidForUser &&
+                cloudUser?.uid === linkedFirebaseUidForUser
+                  ? "Email/Password connected"
+                  : "Cloud backup is off"}
+              </Text>
+              <Text style={styles.cloudDescription}>
+                {(linkedFirebaseUidForUser &&
+                cloudUser?.uid === linkedFirebaseUidForUser
+                  ? cloudUser.email
+                  : null) ||
+                  "Connect an optional Firebase account to back up your store data."}
+              </Text>
+            </View>
+          </View>
+          <Pressable
+            style={({ pressed }) => [
+              styles.cloudButton,
+              pressed && styles.cloudButtonPressed,
+              cloudCancelPending && styles.cloudButtonDisabled,
+            ]}
+            onPress={handleCloudBackup}
+            disabled={cloudCancelPending}
+          >
+            <Ionicons
+              name={
+                cloudOperationActive
+                  ? "close-circle-outline"
+                  : linkedFirebaseUidForUser &&
+                cloudUser?.uid === linkedFirebaseUidForUser
+                  ? "cloud-upload-outline"
+                  : "link-outline"
+              }
+              size={18}
+              color={colors.white}
+            />
+            <Text style={styles.cloudButtonText}>
+              {cloudCancelPending
+                ? "Cancelling backup..."
+                : cloudOperationActive
+                ? "Cancel backup"
+                : cloudUser &&
+                  linkedFirebaseUidForUser === cloudUser.uid
+                  ? "Back up now"
+                  : "Connect and back up"}
+            </Text>
+          </Pressable>
+          <Text style={styles.cloudFootnote}>
+            Backups are one-way. They do not replace local data or restore data to another device.
+          </Text>
+          {cloudFeedback && !cloudModalVisible && (
+            <Text
+              accessibilityRole="alert"
+              style={
+                cloudFeedback.type === "error"
+                  ? styles.cloudError
+                  : styles.cloudStatus
+              }
+            >
+              {cloudFeedback.message}
+            </Text>
+          )}
+          {cloudSyncState.status === "queued" && (
+            <Text style={styles.cloudStatus}>Cloud backup queued…</Text>
+          )}
+          {cloudSyncState.status === "syncing" && (
+            <Text style={styles.cloudStatus}>Backing up local changes…</Text>
+          )}
+          {cloudSyncState.status === "cancelling" && (
+            <Text style={styles.cloudStatus}>Stopping after the current upload…</Text>
+          )}
+          {cloudSyncState.status === "cancelled" && (
+            <Text style={styles.cloudStatus}>
+              Backup cancelled. Any batches already uploaded remain in the cloud.
+            </Text>
+          )}
+          {cloudSyncState.status === "synced" && (
+            <Text style={styles.cloudStatus}>
+              Last backup: {new Date(cloudSyncState.backedUpAt).toLocaleString()}
+            </Text>
+          )}
+          {cloudSyncState.status === "failed" && (
+            <View>
+              <Text style={styles.cloudError}>
+                Local data is saved, but cloud backup failed: {cloudSyncState.message}
+              </Text>
+              <Pressable
+                onPress={() => {
+                  if (user?.id) {
+                    retryCloudSync(db, user.id);
+                  }
+                }}
+                disabled={cloudBusy}
+                style={styles.cloudRetry}
+              >
+                <Text style={styles.cloudRetryText}>Retry cloud backup</Text>
+              </Pressable>
+            </View>
+          )}
         </Card>
 
         {/* =========================
@@ -614,8 +935,136 @@ export default function SettingsScreen() {
           </View>
         </View>
       </Modal>
+      <Modal
+        visible={cloudModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (cloudBusy) cancelCloudBackup();
+          else setCloudModalVisible(false);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.cloudModal}>
+            <Text style={styles.cloudModalTitle}>Connect cloud backup</Text>
+            <Text style={styles.cloudModalMessage}>
+              Use Firebase Email/Password. This does not change your local PIN.
+            </Text>
+            {cloudFeedback?.type === "error" && (
+              <Text accessibilityRole="alert" style={styles.cloudError}>
+                {cloudFeedback.message}
+              </Text>
+            )}
+            <TextInput
+              value={cloudEmail}
+              onChangeText={setCloudEmail}
+              placeholder="Email"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoComplete="email"
+              editable={!cloudBusy}
+              style={styles.cloudInput}
+            />
+            <TextInput
+              value={cloudPassword}
+              onChangeText={setCloudPassword}
+              placeholder="Password"
+              placeholderTextColor={colors.textMuted}
+              secureTextEntry
+              autoComplete="password"
+              editable={!cloudBusy}
+              style={styles.cloudInput}
+            />
+            <Pressable
+              style={[styles.cloudButton, cloudBusy && styles.cloudButtonDisabled]}
+              onPress={() => handleCloudAuth("signin")}
+              disabled={cloudBusy}
+            >
+              <Text style={styles.cloudButtonText}>
+                {cloudBusy ? "Please wait..." : "Sign in and back up"}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.cloudButton,
+                styles.cloudCreateButton,
+                cloudBusy && styles.cloudButtonDisabled,
+              ]}
+              onPress={() => handleCloudAuth("create")}
+              disabled={cloudBusy}
+            >
+              <Text style={styles.cloudCreateButtonText}>
+                Create account and back up
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                if (cloudBusy) cancelCloudBackup();
+                else setCloudModalVisible(false);
+              }}
+              style={styles.cloudCancel}
+            >
+              <Text style={styles.cloudCancelText}>
+                {cloudBusy
+                  ? cloudCancelPending
+                    ? "Cancelling..."
+                    : "Cancel backup"
+                  : "Cancel"}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
+}
+
+function getCloudBackupSummary(result) {
+  return `Backup complete: ${result.debtors} debtors, ${result.products} products, ${result.sales} sales, and ${result.transactions} transactions uploaded.`;
+}
+
+function createCloudBackupCancelledError() {
+  const error = new Error("Cloud backup was cancelled.");
+  error.code = "cloud-sync/cancelled";
+  return error;
+}
+
+function throwIfCloudBackupCancelled(cancelRef) {
+  if (cancelRef.current) {
+    throw createCloudBackupCancelledError();
+  }
+}
+
+function getCloudErrorMessage(error) {
+  if (error?.code === "cloud-sync/cancelled") {
+    return "Backup cancelled. Any batches already uploaded remain in the cloud.";
+  }
+  const messages = {
+    "auth/email-already-in-use":
+      "That email already has a Firebase account. Choose Sign in instead.",
+    "auth/invalid-email": "Enter a valid email address.",
+    "auth/weak-password": "Choose a stronger password (at least 6 characters).",
+    "auth/invalid-credential":
+      "Email or password is incorrect. Check your details and try again.",
+    "auth/user-not-found":
+      "No Firebase account was found for that email. Create an account first.",
+    "auth/wrong-password":
+      "Email or password is incorrect. Check your details and try again.",
+    "auth/operation-not-allowed":
+      "Email/Password sign-in is disabled. Enable it in Firebase Authentication settings.",
+    "auth/network-request-failed":
+      "Could not reach Firebase. Check your internet connection and retry.",
+    "auth/too-many-requests":
+      "Firebase temporarily blocked sign-in attempts. Wait a bit, then retry.",
+    "permission-denied":
+      "Firestore denied this backup. Publish the owner-only rules in firestore.rules.",
+    "firestore/permission-denied":
+      "Firestore denied this backup. Publish the owner-only rules in firestore.rules.",
+  };
+  const code = error?.code;
+  if (code && messages[code]) return messages[code];
+  return error?.message || "Could not connect or back up. Please try again.";
 }
 
 const styles = StyleSheet.create({
@@ -907,6 +1356,149 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 19,
     marginBottom: 24,
+  },
+
+  cloudCard: {
+    padding: 16,
+    borderRadius: 19,
+    marginBottom: 24,
+  },
+
+  cloudHeading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 14,
+  },
+
+  cloudCopy: {
+    flex: 1,
+  },
+
+  cloudTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+
+  cloudDescription: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginTop: 4,
+  },
+
+  cloudButton: {
+    minHeight: 46,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    backgroundColor: colors.navy,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  cloudButtonPressed: {
+    opacity: 0.85,
+  },
+
+  cloudButtonDisabled: {
+    opacity: 0.55,
+  },
+
+  cloudButtonText: {
+    color: colors.white,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
+  cloudFootnote: {
+    color: colors.textMuted,
+    fontSize: 10,
+    lineHeight: 15,
+    marginTop: 10,
+  },
+
+  cloudStatus: {
+    color: colors.success,
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 8,
+  },
+
+  cloudError: {
+    color: colors.danger,
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 8,
+  },
+
+  cloudRetry: {
+    alignSelf: "flex-start",
+    paddingVertical: 8,
+  },
+
+  cloudRetryText: {
+    color: colors.navy,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  cloudModal: {
+    width: "100%",
+    borderRadius: 20,
+    padding: 20,
+    backgroundColor: colors.white,
+  },
+
+  cloudModalTitle: {
+    color: colors.navy,
+    fontSize: 18,
+    fontWeight: "800",
+  },
+
+  cloudModalMessage: {
+    color: colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 6,
+    marginBottom: 16,
+  },
+
+  cloudInput: {
+    minHeight: 48,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 11,
+    paddingHorizontal: 13,
+    color: colors.text,
+    marginBottom: 10,
+  },
+
+  cloudCreateButton: {
+    marginTop: 10,
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.navy,
+  },
+
+  cloudCreateButtonText: {
+    color: colors.navy,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
+  cloudCancel: {
+    minHeight: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 4,
+  },
+
+  cloudCancelText: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: "700",
   },
 
   infoRow: {

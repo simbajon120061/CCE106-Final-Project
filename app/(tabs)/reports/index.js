@@ -6,16 +6,17 @@ import {
   Pressable,
   Modal,
   Alert,
-  Share,
   Platform,
+  TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import Card from "@/components/Card";
 import Button from "@/components/Button";
@@ -35,6 +36,8 @@ import {
 } from "@/lib/format";
 
 import {
+  clearHistory,
+  deleteHistoryEntry,
   exportAllData,
   getDailySalesSummary,
   getLowStockProducts,
@@ -42,6 +45,12 @@ import {
   getUnpaidBalances,
 } from "@/db/database";
 import { useAuth } from "@/context/AuthContext";
+import {
+  createSpreadsheetCsv,
+  saveSpreadsheetBackup,
+} from "@/lib/spreadsheetBackup";
+
+const BACKUP_SETTINGS_KEY = "track-and-tally:backup-settings:";
 
 export default function ReportsScreen() {
   const db = useSQLiteContext();
@@ -63,9 +72,86 @@ export default function ReportsScreen() {
 
   const [historyDateFilter, setHistoryDateFilter] =
     useState("all");
+  const [printDateFilter, setPrintDateFilter] =
+    useState("all");
 
   const [backupLoading, setBackupLoading] = useState(false);
+  const [backupSchedule, setBackupSchedule] = useState("12");
+  const [customBackupHours, setCustomBackupHours] = useState("");
+  const [backupScheduleLoading, setBackupScheduleLoading] = useState(true);
+  const [lastAutoBackupAt, setLastAutoBackupAt] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
+  const [historyClearing, setHistoryClearing] = useState(false);
+
+  const handleClearHistory = useCallback(() => {
+    if (!user?.id || historyClearing) return;
+
+    Alert.alert(
+      "Clear all history?",
+      "This permanently removes all sales and payment records for this store. Debtor profiles will not be removed.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear all",
+          style: "destructive",
+          onPress: async () => {
+            setHistoryClearing(true);
+            try {
+              await clearHistory(db, user.id);
+              setHistory([]);
+              setSummary([]);
+              setUnpaid([]);
+              setHistoryTypeFilter("all");
+              setHistoryDateFilter("all");
+            } catch (error) {
+              console.error("Failed to clear history:", error);
+              Alert.alert(
+                "Could not clear history",
+                error?.message || "Please try again."
+              );
+            } finally {
+              setHistoryClearing(false);
+            }
+          },
+        },
+      ]
+    );
+  }, [db, historyClearing, user]);
+
+  const handleDeleteHistoryEntry = useCallback((entry) => {
+    if (!user?.id) return;
+
+    Alert.alert(
+      "Delete this record?",
+      `Remove this ${entry.label.toLowerCase()} from history? This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deleteHistoryEntry(db, user.id, entry.id);
+              const [summaryRows, unpaidRows, historyRows] = await Promise.all([
+                getDailySalesSummary(db, user.id, 31),
+                getUnpaidBalances(db, user.id),
+                getTransactionHistory(db, user.id, 30),
+              ]);
+              setSummary(summaryRows || []);
+              setUnpaid(unpaidRows || []);
+              setHistory(historyRows || []);
+            } catch (error) {
+              console.error("Failed to delete history entry:", error);
+              Alert.alert(
+                "Could not delete record",
+                error?.message || "Please try again."
+              );
+            }
+          },
+        },
+      ]
+    );
+  }, [db, user]);
 
   /*
    * LOAD REPORT DATA
@@ -122,7 +208,7 @@ export default function ReportsScreen() {
       return () => {
         active = false;
       };
-    }, [db, user?.id])
+    }, [db, user])
   );
 
   /*
@@ -219,7 +305,13 @@ export default function ReportsScreen() {
    *
    * These are kept for the PDF/report output.
    */
-  const today = summary[0];
+  const now = new Date();
+  const todayDateKey = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+  ].join("-");
+  const today = summary.find((row) => row.date === todayDateKey);
 
   const todayCash = Number(
     today?.cash_total || 0
@@ -294,38 +386,175 @@ export default function ReportsScreen() {
     ]
   );
 
+  const printHistory = useMemo(
+    () =>
+      printDateFilter === "all"
+        ? history
+        : history.filter(
+            (entry) =>
+              getHistoryDateKey(entry.date) ===
+              printDateFilter
+          ),
+    [history, printDateFilter]
+  );
+
+  const printDateLabel =
+    printDateFilter === "all"
+      ? "All dates"
+      : formatDate(printDateFilter);
+
+  const backupIntervalHours = useMemo(() => {
+    if (backupSchedule === "custom") {
+      const hours = Number(customBackupHours);
+      return Number.isFinite(hours) && hours >= 1 ? hours : null;
+    }
+
+    return Number(backupSchedule) || null;
+  }, [backupSchedule, customBackupHours]);
+
+  useEffect(() => {
+    if (!user?.id) return undefined;
+
+    let current = true;
+    setBackupScheduleLoading(true);
+
+    AsyncStorage.getItem(`${BACKUP_SETTINGS_KEY}${user.id}`)
+      .then((stored) => {
+        if (!stored || !current) return;
+        const settings = JSON.parse(stored);
+        setBackupSchedule(settings.schedule || "12");
+        setCustomBackupHours(settings.customHours || "");
+        setLastAutoBackupAt(settings.lastAutoBackupAt || null);
+      })
+      .catch((error) => {
+        console.error("Could not load backup settings:", error);
+      })
+      .finally(() => {
+        if (current) setBackupScheduleLoading(false);
+      });
+
+    return () => {
+      current = false;
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || backupScheduleLoading) return;
+
+    AsyncStorage.setItem(
+      `${BACKUP_SETTINGS_KEY}${user.id}`,
+      JSON.stringify({
+        schedule: backupSchedule,
+        customHours: customBackupHours,
+        lastAutoBackupAt,
+      })
+    ).catch((error) => {
+      console.error("Could not save backup settings:", error);
+    });
+  }, [
+    backupSchedule,
+    backupScheduleLoading,
+    customBackupHours,
+    lastAutoBackupAt,
+    user?.id,
+  ]);
+
+  useEffect(() => {
+    if (
+      Platform.OS === "web" ||
+      !user?.id ||
+      backupScheduleLoading ||
+      !backupIntervalHours
+    ) {
+      return undefined;
+    }
+
+    let active = true;
+    const intervalMs = backupIntervalHours * 60 * 60 * 1000;
+
+    const createAutomaticBackup = async () => {
+      const now = Date.now();
+      if (lastAutoBackupAt && now - lastAutoBackupAt < intervalMs) return;
+
+      try {
+        const data = await exportAllData(db, user.id);
+        await saveSpreadsheetBackup(data, "automatic");
+        if (active) setLastAutoBackupAt(now);
+      } catch (error) {
+        console.error("Automatic spreadsheet backup failed:", error);
+      }
+    };
+
+    createAutomaticBackup();
+    const timer = setInterval(createAutomaticBackup, 60 * 60 * 1000);
+
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [
+    backupIntervalHours,
+    backupScheduleLoading,
+    db,
+    lastAutoBackupAt,
+    user?.id,
+  ]);
+
   /*
-   * BACKUP
+   * SPREADSHEET BACKUP
    */
-  async function handleShareBackup() {
+  async function handleSaveSpreadsheetBackup() {
     setBackupLoading(true);
 
     try {
-      const data =
-        await exportAllData(
-          db,
-          user?.id
-        );
+      if (!user?.id) {
+        throw new Error("User is not logged in.");
+      }
 
-      await Share.share({
-        title:
-          "Track and Tally Backup",
-        message:
-          JSON.stringify(
-            data,
-            null,
-            2
-          ),
+      const data = await exportAllData(db, user.id);
+
+      if (Platform.OS === "web") {
+        const blob = new Blob([createSpreadsheetCsv(data)], {
+          type: "text/csv;charset=utf-8",
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "track-and-tally-backup.csv";
+        link.click();
+        URL.revokeObjectURL(url);
+        Alert.alert(
+          "Spreadsheet downloaded",
+          "Upload the downloaded CSV file to Google Drive if you want a cloud copy."
+        );
+        return;
+      }
+
+      const uri = await saveSpreadsheetBackup(data, "manual");
+
+      const canShare = await Sharing.isAvailableAsync();
+      if (!canShare) {
+        Alert.alert(
+          "Spreadsheet saved",
+          "Your CSV backup was saved locally."
+        );
+        return;
+      }
+
+      await Sharing.shareAsync(uri, {
+        dialogTitle: "Save spreadsheet backup",
+        mimeType: "text/csv",
+        UTI: "public.comma-separated-values-text",
       });
     } catch (error) {
       console.error(
-        "Failed to export backup:",
+        "Failed to create spreadsheet backup:",
         error
       );
 
       Alert.alert(
-        "Export failed",
-        "Please try again."
+        "Backup failed",
+        error?.message || "Please try again."
       );
     } finally {
       setBackupLoading(false);
@@ -350,7 +579,8 @@ export default function ReportsScreen() {
           totalUnpaid,
           unpaid,
           lowStock,
-          history,
+          history: printHistory,
+          historyDateLabel: printDateLabel,
         });
 
       if (Platform.OS === "web") {
@@ -973,6 +1203,30 @@ export default function ReportsScreen() {
               icon="time-outline"
               title="Recent history"
               subtitle="Filter your latest transactions"
+              action={
+                <Pressable
+                  onPress={handleClearHistory}
+                  disabled={!user?.id || historyClearing}
+                  style={({ pressed }) => [
+                    styles.historyClearButton,
+                    (!user?.id || historyClearing) &&
+                      styles.historyClearButtonDisabled,
+                    pressed &&
+                      user?.id &&
+                      !historyClearing &&
+                      styles.historyClearButtonPressed,
+                  ]}
+                >
+                  <Ionicons
+                    name="trash-outline"
+                    size={14}
+                    color={colors.danger}
+                  />
+                  <Text style={styles.historyClearText}>
+                    {historyClearing ? "Clearing" : "Clear"}
+                  </Text>
+                </Pressable>
+              }
             />
 
             <Card
@@ -1069,8 +1323,12 @@ export default function ReportsScreen() {
               >
                 {filteredHistory.map(
                   (entry, i) => (
-                    <View
+                    <Pressable
                       key={entry.id}
+                      onLongPress={() =>
+                        handleDeleteHistoryEntry(entry)
+                      }
+                      delayLongPress={450}
                       style={[
                         styles.dayRow,
 
@@ -1174,7 +1432,7 @@ export default function ReportsScreen() {
                               : "Cash sale"}
                         </Text>
                       </View>
-                    </View>
+                    </Pressable>
                   )
                 )}
               </Card>
@@ -1191,7 +1449,7 @@ export default function ReportsScreen() {
             <SectionHeader
               icon="cloud-upload-outline"
               title="Backup data"
-              subtitle="Protect and export your local records"
+              subtitle="Export a copy of your local SQLite records"
             />
 
             <Card
@@ -1238,17 +1496,58 @@ export default function ReportsScreen() {
               <Text
                 style={styles.backupTitle}
               >
-                Export local records
+                Spreadsheet backup
               </Text>
 
               <Text
                 style={styles.backupText}
               >
-                Share a JSON backup
-                containing debtors,
-                inventory, sales, and
-                payments.
+                Create a CSV spreadsheet with
+                debtors, inventory, sales, and
+                payments. You can save it to Google Drive.
               </Text>
+
+              <View style={styles.backupScheduleSection}>
+                <Text style={styles.filterLabel}>
+                  Automatic spreadsheet backup
+                </Text>
+
+                <HistoryFilterDropdown
+                  title="Backup frequency"
+                  value={backupSchedule}
+                  options={[
+                    { label: "Every 8 hours", value: "8" },
+                    { label: "Every 12 hours", value: "12" },
+                    { label: "Custom hours", value: "custom" },
+                  ]}
+                  onChange={setBackupSchedule}
+                />
+
+                {backupSchedule === "custom" && (
+                  <TextInput
+                    value={customBackupHours}
+                    onChangeText={setCustomBackupHours}
+                    keyboardType="number-pad"
+                    placeholder="Enter hours (minimum 1)"
+                    placeholderTextColor={colors.textMuted}
+                    style={styles.backupHoursInput}
+                  />
+                )}
+
+                <Text style={styles.backupScheduleHint}>
+                  {backupScheduleLoading
+                    ? "Loading backup preference..."
+                    : backupIntervalHours
+                    ? `Automatic backups are saved locally every ${backupIntervalHours} hour${backupIntervalHours === 1 ? "" : "s"} while the app is active.`
+                    : "Enter a custom backup interval of at least 1 hour."}
+                </Text>
+
+                {lastAutoBackupAt && (
+                  <Text style={styles.backupScheduleHint}>
+                    Last automatic backup: {new Date(lastAutoBackupAt).toLocaleString()}
+                  </Text>
+                )}
+              </View>
 
               <View
                 style={styles.infoStrip}
@@ -1264,23 +1563,23 @@ export default function ReportsScreen() {
                     styles.infoStripText
                   }
                 >
-                  Keep a backup somewhere
-                  safe so your records are
-                  easy to restore.
+                  Tap Save spreadsheet, then choose
+                  Google Drive from the share sheet to
+                  upload a copy.
                 </Text>
               </View>
 
               <Button
-                title="Share backup"
+                title="Save spreadsheet"
                 onPress={
-                  handleShareBackup
+                  handleSaveSpreadsheetBackup
                 }
                 loading={
                   backupLoading
                 }
                 icon={
                   <Ionicons
-                    name="share-outline"
+                    name="document-text-outline"
                     size={18}
                     color={colors.white}
                   />
@@ -1346,6 +1645,28 @@ export default function ReportsScreen() {
                   styles.reportActions
                 }
               >
+                <View style={styles.reportDateFilter}>
+                  <Text style={styles.filterLabel}>
+                    History records to print
+                  </Text>
+
+                  <HistoryFilterDropdown
+                    title="History date to print"
+                    value={printDateFilter}
+                    options={[
+                      {
+                        label: "All dates",
+                        value: "all",
+                      },
+                      ...historyDates.map((date) => ({
+                        label: formatDate(date),
+                        value: date,
+                      })),
+                    ]}
+                    onChange={setPrintDateFilter}
+                  />
+                </View>
+
                 <Button
                   title="Print Reports"
                   variant="ghost"
@@ -1713,6 +2034,33 @@ function buildReportsHtml(
             margin: 18mm 14mm;
           }
 
+          @media print {
+            body {
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+
+            .report {
+              max-width: none;
+            }
+
+            thead {
+              display: table-header-group;
+            }
+
+            h2,
+            tr,
+            .metric {
+              break-inside: avoid;
+              page-break-inside: avoid;
+            }
+
+            h2 {
+              break-after: avoid;
+              page-break-after: avoid;
+            }
+          }
+
           * {
             box-sizing: border-box;
           }
@@ -1953,7 +2301,8 @@ function buildReportsHtml(
           </table>
 
           <h2>
-            Recent transaction history
+            Transaction history
+            (${escapeHtml(report.historyDateLabel)})
           </h2>
 
           <table>
@@ -2052,13 +2401,21 @@ function openWebPrintDialog(
     return;
   }
 
-  printWindow.document.write(
-    html
-  );
+  let printed = false;
+  const printWhenReady = () => {
+    if (printed || printWindow.closed) return;
+    printed = true;
+    printWindow.focus();
+    printWindow.print();
+  };
 
+  printWindow.addEventListener("load", printWhenReady, { once: true });
+  printWindow.document.open();
+  printWindow.document.write(html);
   printWindow.document.close();
-  printWindow.focus();
-  printWindow.print();
+  if (printWindow.document.readyState === "complete") {
+    setTimeout(printWhenReady, 0);
+  }
 }
 
 function getExportErrorMessage(
@@ -2239,6 +2596,7 @@ function SectionHeader({
   icon,
   title,
   subtitle,
+  action,
 }) {
   return (
     <View
@@ -2269,6 +2627,8 @@ function SectionHeader({
           {subtitle}
         </Text>
       </View>
+
+      {action}
     </View>
   );
 }
@@ -3023,6 +3383,32 @@ const styles =
 
     /* ---------------- HISTORY ---------------- */
 
+    historyClearButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      paddingHorizontal: 8,
+      paddingVertical: 6,
+      borderRadius: radius.sm,
+      borderWidth: 1,
+      borderColor: "rgba(179,65,59,0.35)",
+      backgroundColor: "rgba(179,65,59,0.06)",
+    },
+
+    historyClearButtonDisabled: {
+      opacity: 0.5,
+    },
+
+    historyClearButtonPressed: {
+      opacity: 0.72,
+    },
+
+    historyClearText: {
+      color: colors.danger,
+      fontSize: 11,
+      fontWeight: "800",
+    },
+
     historyFiltersCard: {
       borderRadius: 18,
 
@@ -3305,6 +3691,28 @@ const styles =
       lineHeight: 18,
     },
 
+    backupScheduleSection: {
+      gap: spacing.xs,
+      marginTop: spacing.sm,
+    },
+
+    backupHoursInput: {
+      minHeight: 46,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      backgroundColor: colors.cream,
+      paddingHorizontal: 12,
+      color: colors.text,
+      fontSize: 13,
+    },
+
+    backupScheduleHint: {
+      color: colors.textMuted,
+      fontSize: 10,
+      lineHeight: 15,
+    },
+
     infoStrip: {
       flexDirection:
         "row",
@@ -3359,6 +3767,10 @@ const styles =
         spacing.sm,
 
       marginTop: 5,
+    },
+
+    reportDateFilter: {
+      gap: spacing.xs,
     },
 
     /* ---------------- INVENTORY WATCH ---------------- */

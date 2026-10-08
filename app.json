@@ -12,7 +12,8 @@
       "bundleIdentifier": "com.trackandtally.app"
     },
     "android": {
-      "package": "com.trackandtally.app",
+      "package": "com.store.tracktally",
+      "googleServicesFile": "./google-services.json",
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -36,7 +37,8 @@
           "backgroundColor": "#F5F2E8"
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true

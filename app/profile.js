@@ -22,7 +22,6 @@ import Card from "@/components/Card";
 import {
   colors,
   spacing,
-  typography,
   radius,
 } from "@/constants/theme";
 

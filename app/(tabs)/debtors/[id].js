@@ -45,8 +45,6 @@ import {
 import {
   getDebtor,
   getTransactionsForDebtor,
-  addCreditTransaction,
-  addPaymentTransaction,
   deleteTransaction,
   deleteDebtor,
 } from "@/db/database";
@@ -56,7 +54,7 @@ import { useAuth } from "@/context/AuthContext";
 export default function DebtorDetailScreen() {
   const { id } = useLocalSearchParams();
 
-  const debtorId = Number(id);
+  const debtorId = String(id);
 
   const db = useSQLiteContext();
 
@@ -116,11 +114,7 @@ export default function DebtorDetailScreen() {
         "Unable to load debtor information."
       );
     }
-  }, [
-    db,
-    debtorId,
-    user?.id,
-  ]);
+  }, [db, debtorId, user]);
 
   useFocusEffect(
     useCallback(() => {
@@ -263,8 +257,8 @@ export default function DebtorDetailScreen() {
       --------------------------------------------- */
 
       Alert.alert(
-        "Debtor Deleted",
-        `${debtor.full_name} has been successfully removed from your debtor list.`,
+        "Debtor Removed",
+        `${debtor.full_name} has been removed from your debtor list. Their transaction history is retained in Reports.`,
         [
           {
             text: "OK",
@@ -1255,7 +1249,7 @@ export default function DebtorDetailScreen() {
             <Text
               style={styles.footerText}
             >
-              This debtor data is stored locally
+              This debtor data is stored securely in your cloud account.
               in Track&Tally.
             </Text>
           </View>
@@ -1492,8 +1486,8 @@ export default function DebtorDetailScreen() {
             <Text
               style={styles.deleteModalText}
             >
-              Are you sure you want to permanently
-              remove this debtor from Track&Tally?
+              Remove this debtor from your active list?
+              Their transaction history will remain in Reports.
             </Text>
 
             {/* DEBTOR CARD */}

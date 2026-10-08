@@ -34,6 +34,7 @@ import { formatStockQuantity, stockUnitLabel } from "@/lib/inventory";
 
 export default function EditProductScreen() {
   const { id } = useLocalSearchParams();
+  const productId = Array.isArray(id) ? id[0] : id;
   const db = useSQLiteContext();
   const router = useRouter();
   const { user } = useAuth();
@@ -50,27 +51,40 @@ export default function EditProductScreen() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    getProduct(db, user?.id, Number(id)).then((p) => {
-      if (!p) return;
+    if (!user?.id || !productId) return;
 
-      setProduct(p);
-      setName(p.name);
-      setCategory(p.category || "");
-      setUnit(p.unit || "piece");
-      setMeasurementValue(
-        p.measurement_value == null ? "" : String(p.measurement_value)
-      );
-      setPrice(String(p.item_price ?? p.unit_price));
-      setPackagePrice(
-        p.item_price != null &&
-          Number(p.item_price) !== Number(p.unit_price)
-          ? String(p.unit_price)
-          : ""
-      );
-      setStock(String(p.stock_quantity));
-      setThreshold(String(p.low_stock_threshold));
-    });
-  }, [db, id, user?.id]);
+    let current = true;
+
+    getProduct(db, user.id, productId)
+      .then((p) => {
+        if (!p || !current) return;
+
+        setProduct(p);
+        setName(p.name);
+        setCategory(p.category || "");
+        setUnit(p.unit || "piece");
+        setMeasurementValue(
+          p.measurement_value == null ? "" : String(p.measurement_value)
+        );
+        setPrice(String(p.item_price ?? p.unit_price));
+        setPackagePrice(
+          p.item_price != null &&
+            Number(p.item_price) !== Number(p.unit_price)
+            ? String(p.unit_price)
+            : ""
+        );
+        setStock(String(p.stock_quantity));
+        setThreshold(String(p.low_stock_threshold));
+      })
+      .catch((error) => {
+        console.error("Could not load product", error);
+        if (current) Alert.alert("Could not load product", "Please try again.");
+      });
+
+    return () => {
+      current = false;
+    };
+  }, [db, productId, user?.id]);
 
   async function handleSave() {
     if (!name.trim() || !price) {
@@ -89,7 +103,7 @@ export default function EditProductScreen() {
     setSaving(true);
 
     try {
-      await updateProduct(db, user?.id, Number(id), {
+      await updateProduct(db, user?.id, productId, {
         name: name.trim(),
         category: category.trim() || null,
         unit,
@@ -103,6 +117,12 @@ export default function EditProductScreen() {
       });
 
       router.back();
+    } catch (error) {
+      console.error("Could not update product", error);
+      Alert.alert(
+        "Could not save product",
+        error?.message || "Please check the product details and try again."
+      );
     } finally {
       setSaving(false);
     }
@@ -121,11 +141,16 @@ export default function EditProductScreen() {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
-            await deleteProduct(
-              db, user?.id,
-              Number(id)
-            );
-            router.back();
+            try {
+              await deleteProduct(db, user?.id, productId);
+              router.back();
+            } catch (error) {
+              console.error("Could not delete product", error);
+              Alert.alert(
+                "Could not delete product",
+                error?.message || "Please try again."
+              );
+            }
           },
         },
       ]
@@ -1027,4 +1052,3 @@ const styles = StyleSheet.create({
     height: 10,
   },
 });
-

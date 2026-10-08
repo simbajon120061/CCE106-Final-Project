@@ -90,7 +90,7 @@ export default function AddCreditScreen() {
         console.error("Failed to load products:", error);
       }
     },
-    [db, user?.id]
+    [db, user]
   );
 
   /* =========================================================
@@ -102,7 +102,7 @@ export default function AddCreditScreen() {
 
     Promise.all([
       getProducts(db, user?.id),
-      getDebtor(db, Number(debtorId), user?.id),
+      getDebtor(db, debtorId, user?.id),
     ])
       .then(([productRows, debtorRecord]) => {
         if (!active) return;
@@ -382,7 +382,7 @@ export default function AddCreditScreen() {
           user?.id,
           {
             saleType: "credit",
-            debtorId: Number(debtorId),
+            debtorId: String(debtorId),
             items: cartItems,
             description:
               description.trim() || null,
@@ -393,7 +393,7 @@ export default function AddCreditScreen() {
           db,
           {
             userId: user?.id,
-            debtorId: Number(debtorId),
+            debtorId: String(debtorId),
             amount: amountNumber,
             description:
               description.trim() || null,
@@ -915,7 +915,7 @@ export default function AddCreditScreen() {
 
             <Text style={styles.heroSubtitle}>
               Record items or an amount to add
-              to the debtor's balance.
+              to the debtor&apos;s balance.
             </Text>
           </View>
         </View>
@@ -1124,7 +1124,7 @@ export default function AddCreditScreen() {
 
             <Text style={styles.saveHintText}>
               This credit sale will be added to
-              the debtor's outstanding balance.
+              the debtor&apos;s outstanding balance.
             </Text>
           </View>
 

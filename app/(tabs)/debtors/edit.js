@@ -12,7 +12,7 @@ import { DebtorFields, DebtorPhotoPicker, usePhotoHandlers } from "./new";
 
 export default function EditDebtorScreen() {
   const { debtorId } = useLocalSearchParams();
-  const id = Number(debtorId);
+  const id = String(debtorId);
   const db = useSQLiteContext();
   const router = useRouter();
   const { user } = useAuth();
@@ -37,7 +37,7 @@ export default function EditDebtorScreen() {
     let active = true;
 
     async function load() {
-      const debtor = await getDebtor(db, Number(id), user?.id);
+      const debtor = await getDebtor(db, id, user?.id);
       if (!active || !debtor) return;
 
       setFullName(debtor.full_name || "");
@@ -64,7 +64,7 @@ export default function EditDebtorScreen() {
 
     setSaving(true);
     try {
-      await updateDebtor(db, Number(id), {
+      await updateDebtor(db, id, {
         full_name: fullName.trim(),
         contact_number: contact.trim() || null,
         id_number: idNumber.trim() || null,

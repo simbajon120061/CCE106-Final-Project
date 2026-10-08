@@ -42,7 +42,7 @@ export default function SellScreen() {
       setProducts(rows);
       setLoaded(true);
     },
-    [db, user?.id]
+    [db, user]
   );
 
   useFocusEffect(
@@ -838,4 +838,3 @@ qtyText: {
     justifyContent: "center",
   },
 });
-

@@ -64,7 +64,15 @@ export default function NewProductScreen() {
         low_stock_threshold: Number(threshold) || 5,
       });
 
-      router.back();
+      // Replace the modal with the list route so it mounts again and reads
+      // the newly saved record from SQLite.
+      router.replace("/inventory");
+    } catch (error) {
+      console.error("Could not create product", error);
+      Alert.alert(
+        "Could not save product",
+        error?.message || "Please check the product details and try again."
+      );
     } finally {
       setSaving(false);
     }
@@ -583,4 +591,3 @@ const styles = StyleSheet.create({
     height: 10,
   },
 });
-
