@@ -357,7 +357,7 @@ export default function DebtorDetailScreen() {
 
       <View style={styles.header}>
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => router.replace("/(tabs)/debtors")}
           hitSlop={12}
           style={({ pressed }) => [
             styles.backButton,
