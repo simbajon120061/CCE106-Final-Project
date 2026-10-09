@@ -695,6 +695,9 @@ export default function ReportsScreen() {
 
       <ScrollView
         showsVerticalScrollIndicator={false}
+        stickyHeaderIndices={
+          tab === "history" ? [1] : undefined
+        }
         contentContainerStyle={
           styles.container
         }
@@ -1199,8 +1202,9 @@ export default function ReportsScreen() {
         {/* ================================================== */}
 
         {tab === "history" && (
-          <>
+          [
             <SectionHeader
+              key="history-header"
               icon="time-outline"
               title="Recent history"
               subtitle="Filter your latest transactions"
@@ -1228,13 +1232,13 @@ export default function ReportsScreen() {
                   </Text>
                 </Pressable>
               }
-            />
+            />,
 
-            <Card
-              style={
-                styles.historyFiltersCard
-              }
+            <View
+              key="history-filters"
+              style={styles.historyFiltersSticky}
             >
+              <Card style={styles.historyFiltersCard}>
               <Text
                 style={styles.filterLabel}
               >
@@ -1304,22 +1308,26 @@ export default function ReportsScreen() {
                   setHistoryDateFilter
                 }
               />
-            </Card>
+              </Card>
+            </View>
 
-            {history.length === 0 ? (
+            , (history.length === 0 ? (
               <EmptyState
+                key="history-empty"
                 icon="time-outline"
                 title="No activity recorded yet"
               />
             ) : filteredHistory.length ===
               0 ? (
               <EmptyState
+                key="history-no-match"
                 icon="funnel-outline"
                 title="No matching transactions"
                 subtitle="Try a different transaction type or date."
               />
             ) : (
               <Card
+                key="history-records"
                 style={styles.listCard}
               >
                 {filteredHistory.map(
@@ -1437,8 +1445,8 @@ export default function ReportsScreen() {
                   )
                 )}
               </Card>
-            )}
-          </>
+            ))
+          ]
         )}
 
         {/* ================================================== */}
@@ -3408,6 +3416,11 @@ const styles =
       color: colors.danger,
       fontSize: 11,
       fontWeight: "800",
+    },
+
+    historyFiltersSticky: {
+      backgroundColor: colors.cream,
+      zIndex: 1,
     },
 
     historyFiltersCard: {
