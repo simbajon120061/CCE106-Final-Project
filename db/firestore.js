@@ -1,3 +1,9 @@
+import {
+  collection,
+  doc,
+  setDoc,
+  writeBatch,
+} from "firebase/firestore";
 import { getFirebaseAuth, getFirebaseDb } from "@/firebaseConfig";
 
 function requireUser() {
@@ -68,9 +74,14 @@ export async function syncLocalDataToFirestore(
   ];
 
   for (const { name, records } of recordSets) {
-    const collection = firebaseDb.collection("users").doc(uid).collection(name);
+    const recordCollection = collection(
+      firebaseDb,
+      "users",
+      uid,
+      name
+    );
     const currentRecordIds = new Set(records.map((record) => String(record.id)));
-    let batch = firebaseDb.batch();
+    let batch = writeBatch(firebaseDb);
     let writes = 0;
 
     const addWrite = async (write) => {
@@ -78,7 +89,7 @@ export async function syncLocalDataToFirestore(
         throwIfCancelled(cancellation);
         await batch.commit();
         throwIfCancelled(cancellation);
-        batch = firebaseDb.batch();
+        batch = writeBatch(firebaseDb);
         writes = 0;
       }
       throwIfCancelled(cancellation);
@@ -105,7 +116,7 @@ export async function syncLocalDataToFirestore(
       }
 
       await addWrite((currentBatch) => {
-        currentBatch.set(collection.doc(String(record.id)), {
+        currentBatch.set(doc(recordCollection, String(record.id)), {
           ...data,
           user_id: uid,
         });
@@ -118,7 +129,7 @@ export async function syncLocalDataToFirestore(
         !currentRecordIds.has(String(deletion.record_id))
       ) {
         await addWrite((currentBatch) =>
-          currentBatch.delete(collection.doc(deletion.record_id))
+          currentBatch.delete(doc(recordCollection, deletion.record_id))
         );
       }
     }
@@ -132,7 +143,8 @@ export async function syncLocalDataToFirestore(
 
   throwIfCancelled(cancellation);
   const backedUpAt = new Date().toISOString();
-  await firebaseDb.collection("users").doc(uid).set(
+  await setDoc(
+    doc(firebaseDb, "users", uid),
     {
       phone_number: profile?.phoneNumber ?? null,
       store_name: profile?.storeName ?? null,

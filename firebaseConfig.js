@@ -1,6 +1,5 @@
-import { initializeApp } from "firebase/app";
-import { getAuth, connectAuthEmulator } from "firebase/auth";
-import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
+import { getApp, getApps, initializeApp } from "firebase/app";
+import { getFirestore } from "firebase/firestore";
 import { initializeFirebaseAuth } from "./firebaseAuthPersistence";
 
 const firebaseConfig = {
@@ -19,23 +18,9 @@ let firebaseDb;
 function initializeFirebase() {
   if (app) return;
 
-  app = initializeApp(firebaseConfig);
-  auth = getAuth(app);
+  app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+  auth = initializeFirebaseAuth(app);
   firebaseDb = getFirestore(app);
-
-  // Enable Firestore persistence for React Native
-  try {
-    firebaseDb.enablePersistence?.().catch((error) => {
-      // Persistence is already enabled or not available
-      if (error.code !== "failed-precondition" && error.code !== "unimplemented") {
-        console.warn("Firestore persistence error:", error);
-      }
-    });
-  } catch (error) {
-    console.warn("Could not enable Firestore persistence:", error);
-  }
-
-  initializeFirebaseAuth(auth);
 }
 
 // Initialize on module load

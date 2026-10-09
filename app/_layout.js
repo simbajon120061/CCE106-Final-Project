@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Slot, useRouter, useSegments } from "expo-router";
 import { SQLiteProvider, useSQLiteContext } from "expo-sqlite";
 import { View, ActivityIndicator } from "react-native";
+import { onAuthStateChanged } from "firebase/auth";
 
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { migrateDbIfNeeded } from "@/db/database";
@@ -56,7 +57,7 @@ function CloudSyncBridge() {
 
     const schedule = () => scheduleCloudSync(db, user.id);
     schedule();
-    const unsubscribe = getFirebaseAuth().onAuthStateChanged(schedule);
+    const unsubscribe = onAuthStateChanged(getFirebaseAuth(), schedule);
     const stopWatchingForeground = watchCloudSyncOnForeground(db, user.id);
 
     return () => {

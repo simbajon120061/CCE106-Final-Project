@@ -1,3 +1,5 @@
-export function initializeFirebaseAuth() {
-  return undefined;
+import { getAuth } from "firebase/auth";
+
+export function initializeFirebaseAuth(app) {
+  return getAuth(app);
 }

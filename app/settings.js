@@ -13,6 +13,11 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
 import { useSQLiteContext } from "expo-sqlite";
+import {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+} from "firebase/auth";
 
 import Card from "@/components/Card";
 import { colors, spacing, radius } from "@/constants/theme";
@@ -63,7 +68,7 @@ export default function SettingsScreen() {
     (cloudBusy || cloudSyncState.status === "cancelling");
 
   useEffect(() => {
-    return firebaseAuth.onAuthStateChanged(setCloudUser);
+    return onAuthStateChanged(firebaseAuth, setCloudUser);
   }, [firebaseAuth]);
 
   useEffect(() => {
@@ -187,11 +192,13 @@ export default function SettingsScreen() {
     try {
       const credentials =
         action === "create"
-          ? await firebaseAuth.createUserWithEmailAndPassword(
+          ? await createUserWithEmailAndPassword(
+              firebaseAuth,
               email,
               cloudPassword
             )
-          : await firebaseAuth.signInWithEmailAndPassword(
+          : await signInWithEmailAndPassword(
+              firebaseAuth,
               email,
               cloudPassword
             );
