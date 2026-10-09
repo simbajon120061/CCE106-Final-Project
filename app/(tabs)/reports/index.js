@@ -353,7 +353,9 @@ export default function ReportsScreen() {
       history.filter((entry) => {
         const matchesType =
           historyTypeFilter === "all" ||
-          entry.type === historyTypeFilter;
+          (historyTypeFilter === "e_wallet"
+            ? entry.label === "E-wallet Sale"
+            : entry.type === historyTypeFilter);
 
         const matchesDate =
           historyDateFilter === "all" ||
@@ -1090,6 +1092,11 @@ export default function ReportsScreen() {
                   },
 
                   {
+                    label: "E-Wallet Sale",
+                    value: "e_wallet",
+                  },
+
+                  {
                     label: "Utang",
                     value: "credit",
                   },
@@ -1265,7 +1272,10 @@ export default function ReportsScreen() {
                             : entry.type ===
                                 "credit"
                               ? "Utang"
-                              : "Cash sale"}
+                              : entry.label ===
+                                  "E-wallet Sale"
+                                ? "E-Wallet sale"
+                                : "Cash sale"}
                         </Text>
                       </View>
                     </Pressable>
