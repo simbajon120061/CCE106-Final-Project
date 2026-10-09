@@ -1,5 +1,5 @@
 // checkout.js
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -8,12 +8,14 @@ import {
   Pressable,
   Alert,
   Modal,
+  TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
 import * as Print from "expo-print";
+import { CameraView, useCameraPermissions } from "expo-camera";
 import Button from "@/components/Button";
 import Card from "@/components/Card";
 import { colors, spacing, typography, radius } from "@/constants/theme";
@@ -32,7 +34,15 @@ export default function CheckoutScreen() {
   const [debtors, setDebtors] = useState([]);
   const [selectedDebtorId, setSelectedDebtorId] = useState(null);
   const [saving, setSaving] = useState(false);
-
+  const [walletProvider, setWalletProvider] = useState("gcash");
+  const [customWallet, setCustomWallet] = useState("");
+  const [paymentReference, setPaymentReference] = useState("");
+  const [customerName, setCustomerName] = useState("");
+  const [qrScannerVisible, setQrScannerVisible] = useState(false);
+  const [qrScannerReady, setQrScannerReady] = useState(false);
+  const [qrScannerError, setQrScannerError] = useState("");
+  const qrScannedRef = useRef(false);
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [receipt, setReceipt] = useState(null);
 
@@ -73,6 +83,14 @@ export default function CheckoutScreen() {
       );
       return;
     }
+    if (
+      saleType === "e_wallet" &&
+      walletProvider === "other" &&
+      !customWallet.trim()
+    ) {
+      Alert.alert("Wallet required", "Enter the e-wallet provider name.");
+      return;
+    }
 
     setShowConfirmModal(true);
   }
@@ -83,9 +101,24 @@ export default function CheckoutScreen() {
 
     try {
       const saleId = await createSale(db, user?.id, {
-        saleType,
+        saleType: saleType === "credit" ? "credit" : "cash",
         debtorId: selectedDebtorId,
-        items: cartItems,
+        items: cartItems.map((item) => ({
+          ...item,
+          unitPrice: getUnitPrice(item),
+        })),
+        customerName,
+        paymentMethod: saleType === "e_wallet" ? "e_wallet" : "cash",
+        paymentProvider:
+          saleType === "e_wallet"
+            ? walletProvider === "other"
+              ? customWallet.trim()
+              : walletProvider === "gcash"
+                ? "GCash"
+                : "Maya"
+            : null,
+        paymentReference:
+          saleType === "e_wallet" ? paymentReference.trim() || null : null,
       });
 
       setReceipt({
@@ -95,6 +128,19 @@ export default function CheckoutScreen() {
         saleType,
         debtorName:
           saleType === "credit" ? selectedDebtor?.full_name : null,
+        customerName: customerName.trim() || null,
+        paymentMethod:
+          saleType === "e_wallet"
+            ? walletProvider === "other"
+              ? customWallet.trim()
+              : walletProvider === "gcash"
+                ? "GCash"
+                : "Maya"
+            : saleType === "credit"
+              ? "Utang"
+              : "Cash",
+        paymentReference:
+          saleType === "e_wallet" ? paymentReference.trim() || null : null,
         items: cartItems.map((item) => ({
           name: item.product.name,
           quantity: item.quantity,
@@ -111,6 +157,53 @@ export default function CheckoutScreen() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function openQrScanner() {
+    if (!cameraPermission?.granted) {
+      try {
+        const result = await requestCameraPermission();
+        if (!result.granted) {
+          Alert.alert(
+            "Camera permission required",
+            result.canAskAgain
+              ? "Allow camera access to scan the e-wallet QR code."
+              : "Camera access is disabled for Track & Tally. Enable it in your device settings to scan QR codes."
+          );
+          return;
+        }
+      } catch (error) {
+        console.error("Could not request camera permission:", error);
+        Alert.alert(
+          "Camera unavailable",
+          "Could not request camera access. Check the app's camera permission and try again."
+        );
+        return;
+      }
+    }
+    qrScannedRef.current = false;
+    setQrScannerReady(false);
+    setQrScannerError("");
+    setQrScannerVisible(true);
+  }
+
+  function handleQrScanned({ data }) {
+    if (qrScannedRef.current || !data) return;
+    qrScannedRef.current = true;
+    setPaymentReference(String(data));
+    setQrScannerVisible(false);
+  }
+
+  function closeQrScanner() {
+    setQrScannerVisible(false);
+    setQrScannerReady(false);
+  }
+
+  function handleQrScannerError(event) {
+    console.error("QR scanner camera failed to mount:", event?.message || event);
+    setQrScannerError(
+      event?.message || "The camera could not start. Close the scanner and try again."
+    );
   }
 
   function closeReceipt() {
@@ -293,10 +386,15 @@ export default function CheckoutScreen() {
             </View>
           </View>
 
-          <View style={styles.typeRow}>
+          <View
+            style={styles.typeRow}
+            accessibilityRole="radiogroup"
+            accessibilityLabel="Payment type"
+          >
             <OptionChip
               icon="cash-outline"
               label="Cash"
+              description="Pay now"
               active={saleType === "cash"}
               onPress={() => setSaleType("cash")}
             />
@@ -304,10 +402,90 @@ export default function CheckoutScreen() {
             <OptionChip
               icon="time-outline"
               label="Utang"
+              description="Pay later"
               active={saleType === "credit"}
               onPress={() => setSaleType("credit")}
             />
+            <OptionChip
+              icon="phone-portrait-outline"
+              label="E-Wallet"
+              description="GCash / Maya"
+              active={saleType === "e_wallet"}
+              onPress={() => setSaleType("e_wallet")}
+            />
           </View>
+          {saleType === "e_wallet" && (
+            <View style={styles.walletFields}>
+              <Text style={styles.fieldLabel}>E-wallet provider</Text>
+              <View style={styles.walletProviderRow}>
+                {[
+                  { label: "GCash", value: "gcash" },
+                  { label: "Maya", value: "maya" },
+                  { label: "Custom", value: "other" },
+                ].map((provider) => {
+                  const active = walletProvider === provider.value;
+                  return (
+                    <Pressable
+                      key={provider.value}
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: active }}
+                      onPress={() => setWalletProvider(provider.value)}
+                      style={[
+                        styles.walletProviderButton,
+                        active && styles.walletProviderButtonActive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.walletProviderText,
+                          active && styles.walletProviderTextActive,
+                        ]}
+                      >
+                        {provider.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              {walletProvider === "other" && (
+                <TextInput
+                  value={customWallet}
+                  onChangeText={setCustomWallet}
+                  placeholder="Enter e-wallet name"
+                  placeholderTextColor={colors.textMuted}
+                  style={styles.walletInput}
+                />
+              )}
+              <Text style={styles.fieldLabel}>
+                Reference number or QR code (optional)
+              </Text>
+              <View style={styles.referenceRow}>
+                <TextInput
+                  value={paymentReference}
+                  onChangeText={setPaymentReference}
+                  placeholder="Enter transaction reference"
+                  placeholderTextColor={colors.textMuted}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  style={[styles.walletInput, styles.referenceInput]}
+                />
+                <Pressable
+                  onPress={openQrScanner}
+                  style={({ pressed }) => [
+                    styles.scanQrButton,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Ionicons
+                    name="qr-code-outline"
+                    size={19}
+                    color={colors.white}
+                  />
+                  <Text style={styles.scanQrText}>Scan</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
         </View>
 
         {/* DEBTOR SECTION */}
@@ -486,6 +664,8 @@ export default function CheckoutScreen() {
             <Text style={styles.infoSubtitle}>
               {saleType === "cash"
                 ? "This sale will be recorded as a cash transaction."
+                : saleType === "e_wallet"
+                ? `This sale will be recorded as an ${walletProvider === "other" ? customWallet.trim() || "e-wallet" : walletProvider === "gcash" ? "GCash" : "Maya"} payment.`
                 : selectedDebtorId
                 ? "This sale will be added to the selected debtor's balance."
                 : "Select a debtor before confirming the sale."}
@@ -538,8 +718,8 @@ export default function CheckoutScreen() {
             </Text>
 
             <Text style={styles.modalSubtitle}>
-              Please review the details before
-              completing this transaction.
+              Review your receipt and enter a customer name if you want one
+              printed.
             </Text>
 
             {/* MODAL SUMMARY */}
@@ -547,20 +727,61 @@ export default function CheckoutScreen() {
               <View style={styles.modalSummaryRow}>
                 <View style={styles.summaryLabelRow}>
                   <Ionicons
-                    name="cube-outline"
+                    name="person-outline"
                     size={17}
                     color={colors.textMuted}
                   />
 
                   <Text style={styles.summaryLabel}>
-                    Items
+                    Customer
                   </Text>
                 </View>
 
-                <Text style={styles.summaryValue}>
-                  {cartItems.length}
-                </Text>
+                <TextInput
+                  value={customerName}
+                  onChangeText={setCustomerName}
+                  placeholder="Optional customer name"
+                  placeholderTextColor={colors.textMuted}
+                  style={styles.customerNameInput}
+                />
               </View>
+
+              <View style={styles.modalDivider} />
+
+              <View style={styles.receiptItemsHeader}>
+                <Text style={styles.summaryLabel}>Items</Text>
+                <Text style={styles.summaryLabel}>Amount</Text>
+              </View>
+              <ScrollView
+                style={styles.confirmItems}
+                nestedScrollEnabled
+                showsVerticalScrollIndicator={false}
+              >
+                {cartItems.map((item, index) => (
+                  <View
+                    key={`${item.product.id}-${index}`}
+                    style={styles.confirmItemRow}
+                  >
+                    <View style={styles.confirmItemInfo}>
+                      <Text
+                        style={styles.confirmItemName}
+                        numberOfLines={1}
+                      >
+                        {item.product.name}
+                      </Text>
+                      <Text style={styles.confirmItemQuantity}>
+                        {item.quantity} ×{" "}
+                        {formatCurrency(getUnitPrice(item))}
+                      </Text>
+                    </View>
+                    <Text style={styles.confirmItemAmount}>
+                      {formatCurrency(
+                        item.quantity * getUnitPrice(item)
+                      )}
+                    </Text>
+                  </View>
+                ))}
+              </ScrollView>
 
               <View style={styles.modalDivider} />
 
@@ -587,10 +808,39 @@ export default function CheckoutScreen() {
                   <Text style={styles.paymentBadgeText}>
                     {saleType === "cash"
                       ? "Cash"
-                      : "Utang"}
+                      : saleType === "e_wallet"
+                        ? "E-Wallet"
+                        : "Utang"}
                   </Text>
                 </View>
               </View>
+
+              {saleType === "e_wallet" && (
+                <>
+                  <View style={styles.modalDivider} />
+                  <View style={styles.modalSummaryRow}>
+                    <Text style={styles.summaryLabel}>Provider</Text>
+                    <Text style={styles.summaryValue}>
+                      {walletProvider === "other"
+                        ? customWallet.trim() || "Custom"
+                        : walletProvider === "gcash"
+                          ? "GCash"
+                          : "Maya"}
+                    </Text>
+                  </View>
+                  {paymentReference.trim() ? (
+                    <View style={styles.modalSummaryRow}>
+                      <Text style={styles.summaryLabel}>Reference / QR</Text>
+                      <Text
+                        style={styles.summaryValue}
+                        numberOfLines={1}
+                      >
+                        {paymentReference.trim()}
+                      </Text>
+                    </View>
+                  ) : null}
+                </>
+              )}
 
               {saleType === "credit" &&
                 selectedDebtor && (
@@ -638,7 +888,7 @@ export default function CheckoutScreen() {
                 ]}
               >
                 <Text style={styles.modalTotalLabel}>
-                  Total amount
+                  TOTAL
                 </Text>
 
                 <Text style={styles.modalTotalValue}>
@@ -701,6 +951,49 @@ export default function CheckoutScreen() {
                 </Text>
               </Pressable>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={qrScannerVisible}
+        animationType="slide"
+        onRequestClose={closeQrScanner}
+      >
+        <View style={styles.qrScanner}>
+          <CameraView
+            style={StyleSheet.absoluteFill}
+            active={qrScannerVisible}
+            facing="back"
+            barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+            onBarcodeScanned={handleQrScanned}
+            onCameraReady={() => setQrScannerReady(true)}
+            onMountError={handleQrScannerError}
+          />
+          <View style={styles.qrScannerTopBar}>
+            <Pressable
+              onPress={closeQrScanner}
+              style={styles.qrScannerClose}
+              accessibilityLabel="Close QR scanner"
+            >
+              <Ionicons name="close" size={23} color={colors.white} />
+            </Pressable>
+            <Text style={styles.qrScannerTitle}>Scan payment QR code</Text>
+            <View style={styles.qrScannerClosePlaceholder} />
+          </View>
+          <View style={styles.qrScannerCenter} pointerEvents="none">
+            <View style={styles.qrScannerFrame} />
+          </View>
+          <View style={styles.qrScannerGuide}>
+            {qrScannerError ? (
+              <Text style={styles.qrScannerError}>{qrScannerError}</Text>
+            ) : (
+              <Text style={styles.qrScannerHint}>
+                {qrScannerReady
+                  ? "Point the camera at the customer's payment QR code. Its content will be saved as the reference."
+                  : "Starting camera…"}
+              </Text>
+            )}
           </View>
         </View>
       </Modal>
@@ -770,9 +1063,27 @@ export default function CheckoutScreen() {
               <View style={styles.receiptRow}>
                 <Text style={styles.receiptLabel}>Payment</Text>
                 <Text style={styles.receiptValue}>
-                  {receipt.saleType === "cash" ? "Cash" : "Utang"}
+                  {receipt.paymentMethod}
                 </Text>
               </View>
+
+              {receipt.customerName ? (
+                <View style={styles.receiptRow}>
+                  <Text style={styles.receiptLabel}>Customer</Text>
+                  <Text style={styles.receiptValue}>
+                    {receipt.customerName}
+                  </Text>
+                </View>
+              ) : null}
+
+              {receipt.paymentReference ? (
+                <View style={styles.receiptRow}>
+                  <Text style={styles.receiptLabel}>Reference / QR</Text>
+                  <Text style={styles.receiptValue} numberOfLines={1}>
+                    {receipt.paymentReference}
+                  </Text>
+                </View>
+              ) : null}
 
               {receipt.debtorName ? (
                 <View style={styles.receiptRow}>
@@ -832,7 +1143,9 @@ function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function buildReceiptHtml(receipt) {
@@ -856,7 +1169,9 @@ function buildReceiptHtml(receipt) {
         </p>
         <table style="width:100%; border-collapse:collapse; font-size:13px;">${rows}</table>
         <hr style="border:none; border-top:1px dashed #999; margin:14px 0;" />
-        <p style="font-size:13px; margin:4px 0;">Payment: <b>${receipt.saleType === "cash" ? "Cash" : "Utang"}</b></p>
+        <p style="font-size:13px; margin:4px 0;">Payment: <b>${escapeHtml(receipt.paymentMethod || (receipt.saleType === "cash" ? "Cash" : "Utang"))}</b></p>
+        ${receipt.customerName ? `<p style="font-size:13px; margin:4px 0;">Customer: <b>${escapeHtml(receipt.customerName)}</b></p>` : ""}
+        ${receipt.paymentReference ? `<p style="font-size:13px; margin:4px 0;">Reference / QR: <b>${escapeHtml(receipt.paymentReference)}</b></p>` : ""}
         ${receipt.debtorName ? `<p style="font-size:13px; margin:4px 0;">Debtor: <b>${escapeHtml(receipt.debtorName)}</b></p>` : ""}
         <h3 style="text-align:right; margin:14px 0 0;">Total: ${formatCurrency(receipt.total)}</h3>
         <p style="text-align:center; color:#6B7280; font-size:11px; margin-top:24px;">Thank you!</p>
@@ -866,6 +1181,7 @@ function buildReceiptHtml(receipt) {
 
 function OptionChip({
   label,
+  description,
   icon,
   active,
   onPress,
@@ -873,46 +1189,52 @@ function OptionChip({
   return (
     <Pressable
       style={({ pressed }) => [
-        styles.typeChip,
-        active && styles.typeChipActive,
-        pressed && styles.typeChipPressed,
-      ]}
-      onPress={onPress}
-    >
-      <View
-        style={[
-          styles.typeIcon,
-          active && styles.typeIconActive,
+          styles.typeChip,
+          active && styles.typeChipActive,
+          pressed && styles.typeChipPressed,
         ]}
+        onPress={onPress}
+        accessibilityRole="radio"
+        accessibilityState={{ checked: active }}
       >
-        <Ionicons
-          name={icon}
-          size={19}
-          color={
-            active
-              ? colors.navy
-              : colors.textMuted
-          }
-        />
-      </View>
-
-      <Text
-        style={[
-          styles.typeText,
-          active && styles.typeTextActive,
-        ]}
-      >
-        {label}
-      </Text>
-
-      {active && (
-        <Ionicons
-          name="checkmark-circle"
-          size={18}
-          color={colors.goldLight}
-          style={styles.typeCheck}
-        />
-      )}
+        <View style={styles.typeChipTop}>
+          <View
+            style={[
+              styles.typeIcon,
+              active && styles.typeIconActive,
+            ]}
+          >
+            <Ionicons
+              name={icon}
+              size={17}
+              color={active ? colors.navy : colors.textMuted}
+            />
+          </View>
+          {active && (
+            <Ionicons
+              name="checkmark-circle"
+              size={17}
+              color={colors.goldLight}
+            />
+          )}
+        </View>
+        <Text
+          style={[
+            styles.typeText,
+            active && styles.typeTextActive,
+          ]}
+        >
+          {label}
+        </Text>
+        <Text
+          style={[
+            styles.typeDescription,
+            active && styles.typeDescriptionActive,
+          ]}
+          numberOfLines={1}
+        >
+          {description}
+        </Text>
     </Pressable>
   );
 }
@@ -1198,22 +1520,110 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
 
-  typeChip: {
+  walletFields: {
+    gap: 9,
+    marginTop: 4,
+  },
+
+  fieldLabel: {
+    color: colors.navy,
+    fontSize: 11,
+    fontWeight: "800",
+  },
+
+  walletProviderRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+
+  walletProviderButton: {
     flex: 1,
-    minHeight: 58,
-    borderRadius: radius.sm,
-    backgroundColor: colors.cream,
+    minHeight: 40,
+    alignItems: "center",
+    justifyContent: "center",
     borderWidth: 1,
     borderColor: colors.border,
+    borderRadius: radius.sm,
+    backgroundColor: colors.white,
+  },
+
+  walletProviderButtonActive: {
+    borderColor: colors.navy,
+    backgroundColor: colors.navy,
+  },
+
+  walletProviderText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: "800",
+  },
+
+  walletProviderTextActive: {
+    color: colors.white,
+  },
+
+  walletInput: {
+    minHeight: 46,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    backgroundColor: colors.white,
+    paddingHorizontal: 12,
+    color: colors.text,
+    fontSize: 12,
+  },
+
+  referenceRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+
+  referenceInput: {
+    flex: 1,
+  },
+
+  scanQrButton: {
+    minWidth: 82,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
     paddingHorizontal: 10,
-    gap: 8,
+    borderRadius: radius.sm,
+    backgroundColor: colors.navy,
+  },
+
+  scanQrText: {
+    color: colors.white,
+    fontSize: 11,
+    fontWeight: "800",
+  },
+
+  typeChip: {
+    flex: 1,
+    minHeight: 88,
+    borderRadius: radius.sm,
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "stretch",
+    justifyContent: "center",
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+    gap: 4,
   },
 
   typeChipActive: {
     backgroundColor: colors.navy,
     borderColor: colors.navy,
+    borderWidth: 2,
+  },
+
+  typeChipTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 2,
   },
 
   typeChipPressed: {
@@ -1221,10 +1631,10 @@ const styles = StyleSheet.create({
   },
 
   typeIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: colors.white,
+    width: 27,
+    height: 27,
+    borderRadius: 14,
+    backgroundColor: colors.cream,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1235,7 +1645,7 @@ const styles = StyleSheet.create({
 
   typeText: {
     color: colors.textMuted,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "800",
   },
 
@@ -1243,8 +1653,14 @@ const styles = StyleSheet.create({
     color: colors.white,
   },
 
-  typeCheck: {
-    marginLeft: "auto",
+  typeDescription: {
+    color: colors.textMuted,
+    fontSize: 9,
+    fontWeight: "600",
+  },
+
+  typeDescriptionActive: {
+    color: "rgba(255,255,255,0.78)",
   },
 
   /* DEBTOR */
@@ -1451,6 +1867,7 @@ const styles = StyleSheet.create({
   modalCard: {
     width: "100%",
     maxWidth: 430,
+    maxHeight: "92%",
     backgroundColor: colors.white,
     borderRadius: 24,
     padding: 20,
@@ -1501,6 +1918,59 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     paddingHorizontal: 13,
     paddingVertical: 5,
+  },
+
+  customerNameInput: {
+    flex: 1,
+    minHeight: 40,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 9,
+    backgroundColor: colors.white,
+    paddingHorizontal: 9,
+    color: colors.text,
+    fontSize: 11,
+  },
+
+  receiptItemsHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 9,
+  },
+
+  confirmItems: {
+    maxHeight: 150,
+  },
+
+  confirmItemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    paddingVertical: 6,
+  },
+
+  confirmItemInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  confirmItemName: {
+    color: colors.text,
+    fontSize: 11,
+    fontWeight: "800",
+  },
+
+  confirmItemQuantity: {
+    color: colors.textMuted,
+    fontSize: 10,
+    marginTop: 2,
+  },
+
+  confirmItemAmount: {
+    color: colors.navy,
+    fontSize: 11,
+    fontWeight: "900",
   },
 
   modalSummaryRow: {
@@ -1598,6 +2068,76 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 9,
     marginTop: 17,
+  },
+
+  qrScanner: {
+    flex: 1,
+    backgroundColor: "#000",
+  },
+
+  qrScannerTopBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: 56,
+    paddingHorizontal: 18,
+  },
+
+  qrScannerClose: {
+    width: 42,
+    height: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 21,
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+
+  qrScannerClosePlaceholder: {
+    width: 42,
+  },
+
+  qrScannerTitle: {
+    color: colors.white,
+    fontSize: 16,
+    fontWeight: "800",
+  },
+
+  qrScannerCenter: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  qrScannerGuide: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 54,
+    alignItems: "center",
+    paddingHorizontal: 32,
+  },
+
+  qrScannerFrame: {
+    width: 260,
+    height: 260,
+    borderWidth: 4,
+    borderColor: colors.goldLight,
+    borderRadius: 24,
+    backgroundColor: "transparent",
+  },
+
+  qrScannerHint: {
+    color: colors.white,
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: "center",
+  },
+
+  qrScannerError: {
+    color: "#FFD6D6",
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: "center",
   },
 
   cancelButton: {

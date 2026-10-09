@@ -1,7 +1,7 @@
 // db/database.js
 import { scheduleCloudSync } from "@/db/cloudSync";
 
-const DB_VERSION = 15;
+const DB_VERSION = 16;
 
 /**
  * Runs once when the SQLiteProvider mounts. Creates tables if they don't
@@ -268,6 +268,27 @@ async function ensureProductPricingColumns(db) {
   }
 }
 
+async function ensureSalePaymentColumns(db) {
+  const salesColumns = await db.getAllAsync("PRAGMA table_info(sales)");
+  const hasSalesColumn = (name) =>
+    salesColumns.some((column) => column.name === name);
+
+  if (!hasSalesColumn("customer_name")) {
+    await db.execAsync(`ALTER TABLE sales ADD COLUMN customer_name TEXT;`);
+  }
+  if (!hasSalesColumn("payment_method")) {
+    await db.execAsync(
+      `ALTER TABLE sales ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'cash';`
+    );
+  }
+  if (!hasSalesColumn("payment_provider")) {
+    await db.execAsync(`ALTER TABLE sales ADD COLUMN payment_provider TEXT;`);
+  }
+  if (!hasSalesColumn("payment_reference")) {
+    await db.execAsync(`ALTER TABLE sales ADD COLUMN payment_reference TEXT;`);
+  }
+}
+
 export async function migrateDbIfNeeded(db) {
   await db.execAsync("PRAGMA busy_timeout = 5000;");
 
@@ -427,6 +448,11 @@ export async function migrateDbIfNeeded(db) {
       );
     }
     currentVersion = 15;
+  }
+
+  if (currentVersion < 16) {
+    await ensureSalePaymentColumns(db);
+    currentVersion = 16;
   }
 
   await ensureUserCloudColumns(db);
@@ -866,18 +892,39 @@ export async function adjustStock(db, id, delta) {
 
 /* ------------------------------- Sales ------------------------------- */
 
-export async function createSale(db, userId, { saleType, debtorId = null, items }
+export async function createSale(db, userId, {
+  saleType,
+  debtorId = null,
+  items,
+  customerName = null,
+  paymentMethod = "cash",
+  paymentProvider = null,
+  paymentReference = null,
+}
 ) {
   if (!items?.length) {
     throw new Error("Cart is empty.");
+  }
+  if (!["cash", "credit"].includes(saleType)) {
+    throw new Error("Choose a valid sale type.");
+  }
+  if (!["cash", "e_wallet"].includes(paymentMethod)) {
+    throw new Error("Choose a valid payment method for this sale.");
+  }
+  if (saleType === "credit" && paymentMethod !== "cash") {
+    throw new Error("Credit sales cannot be recorded as an e-wallet payment.");
+  }
+  if (paymentMethod === "e_wallet" && !String(paymentProvider || "").trim()) {
+    throw new Error("Choose an e-wallet provider.");
   }
 
   const normalizedItems = items.map((item) => ({
     product: item.product,
     quantity: Number(item.quantity) || 0,
+    unitPrice: Number(item.unitPrice ?? item.product.unit_price),
   }));
   const total = normalizedItems.reduce(
-    (sum, item) => sum + item.quantity * Number(item.product.unit_price),
+    (sum, item) => sum + item.quantity * item.unitPrice,
     0
   );
 
@@ -891,14 +938,31 @@ export async function createSale(db, userId, { saleType, debtorId = null, items 
       if (item.quantity <= 0) {
         throw new Error("Quantity must be greater than zero.");
       }
+      if (!Number.isFinite(item.unitPrice) || item.unitPrice < 0) {
+        throw new Error(`Invalid price for ${product.name}.`);
+      }
       if (product.stock_quantity < item.quantity) {
         throw new Error(`${product.name} only has ${product.stock_quantity} left in stock.`);
       }
     }
 
     const sale = await db.runAsync(
-      `INSERT INTO sales ( user_id,debtor_id, sale_type, total_amount) VALUES (?, ?, ?, ?)`,
-      [userId,saleType === "credit" ? debtorId : null, saleType, total]
+      `INSERT INTO sales (
+         user_id, debtor_id, sale_type, total_amount, customer_name,
+         payment_method, payment_provider, payment_reference
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        userId,
+        saleType === "credit" ? debtorId : null,
+        saleType,
+        total,
+        String(customerName || "").trim() || null,
+        saleType === "credit" ? "credit" : paymentMethod,
+        paymentMethod === "e_wallet" ? String(paymentProvider).trim() : null,
+        paymentMethod === "e_wallet"
+          ? String(paymentReference || "").trim() || null
+          : null,
+      ]
     );
     saleId = sale.lastInsertRowId;
 
@@ -907,7 +971,7 @@ export async function createSale(db, userId, { saleType, debtorId = null, items 
       await db.runAsync(
         `INSERT INTO sale_items (sale_id, product_id, product_name, unit_price, quantity)
          VALUES (?, ?, ?, ?, ?)`,
-        [saleId, product.id, product.name, product.unit_price, item.quantity]
+        [saleId, product.id, product.name, item.unitPrice, item.quantity]
       );
       await db.runAsync(
         `UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?`,
@@ -1023,7 +1087,9 @@ export async function getDailySalesSummary(db, userId, days = 14) {
 
 export async function getTodaysSales(db, userId) {
   return db.getAllAsync(
-    `SELECT s.id, s.sale_type, s.total_amount, s.created_at, d.full_name AS debtor_name
+    `SELECT s.id, s.sale_type, s.total_amount, s.created_at,
+       s.customer_name, s.payment_method, s.payment_provider,
+       d.full_name AS debtor_name
      FROM sales s
      LEFT JOIN debtors d ON d.id = s.debtor_id
      WHERE s.user_id = ? AND date(s.created_at, 'localtime') = date('now', 'localtime')
@@ -1087,7 +1153,11 @@ export async function getTransactionHistory(db, userId, days = 7) {
   return db.getAllAsync(
     `SELECT
         'sale-' || s.id AS id,
-        CASE WHEN s.sale_type = 'credit' THEN 'Utang' ELSE 'Cash Sale' END AS label,
+        CASE
+          WHEN s.sale_type = 'credit' THEN 'Utang'
+          WHEN s.payment_method = 'e_wallet' THEN 'E-wallet Sale'
+          ELSE 'Cash Sale'
+        END AS label,
         s.sale_type AS type,
         s.total_amount AS amount,
         datetime(s.created_at, 'localtime') AS date,

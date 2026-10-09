@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
+import * as Print from "expo-print";
 import Button from "@/components/Button";
 import { colors, spacing, typography, radius } from "@/constants/theme";
 import { formatCurrency } from "@/lib/format";
@@ -35,6 +36,7 @@ export default function AddPaymentScreen() {
   const [methodMenuVisible, setMethodMenuVisible] = useState(false);
   const [walletMenuVisible, setWalletMenuVisible] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [receipt, setReceipt] = useState(null);
 
   useEffect(() => {
     getDebtor(db, debtorId, user?.id).then(setDebtor);
@@ -84,7 +86,30 @@ export default function AddPaymentScreen() {
             : paymentReference.trim() || null,
       });
 
-      router.back();
+      const provider =
+        paymentMethod === "e_wallet"
+          ? walletProvider === "other"
+            ? customWallet.trim()
+            : walletProvider === "gcash"
+              ? "GCash"
+              : "Maya"
+          : null;
+      setReceipt({
+        date: new Date(),
+        storeName: user?.storeName || "My Store",
+        debtorName: debtor?.full_name || "Debtor",
+        amount: amt,
+        balanceAfter: Math.max(0, balance - amt),
+        paymentMethod:
+          PAYMENT_METHODS.find((method) => method.value === paymentMethod)
+            ?.label || "Cash",
+        provider,
+        reference:
+          paymentMethod === "cash"
+            ? null
+            : paymentReference.trim() || null,
+        description: description.trim() || null,
+      });
     } catch (error) {
       Alert.alert(
         "Unable to save payment",
@@ -92,6 +117,23 @@ export default function AddPaymentScreen() {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  function closeReceipt() {
+    setReceipt(null);
+    router.back();
+  }
+
+  async function printReceipt() {
+    if (!receipt) return;
+    try {
+      await Print.printAsync({ html: buildPaymentReceiptHtml(receipt) });
+    } catch (error) {
+      Alert.alert(
+        "Could not print receipt",
+        error?.message || "Please try again."
+      );
     }
   }
 
@@ -431,8 +473,141 @@ export default function AddPaymentScreen() {
           </Pressable>
         </View>
       </ScrollView>
+
+      <Modal
+        visible={!!receipt}
+        transparent
+        animationType="slide"
+        onRequestClose={closeReceipt}
+      >
+        <View style={styles.receiptOverlay}>
+          {receipt && (
+            <View style={styles.receiptCard}>
+              <View style={styles.receiptIcon}>
+                <Ionicons
+                  name="receipt-outline"
+                  size={28}
+                  color={colors.navy}
+                />
+              </View>
+              <Text style={styles.receiptTitle}>Payment recorded</Text>
+              <Text style={styles.receiptStore}>{receipt.storeName}</Text>
+              <Text style={styles.receiptMeta}>
+                {receipt.date.toLocaleString("en-PH", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </Text>
+
+              <View style={styles.receiptDivider} />
+              <View style={styles.receiptRow}>
+                <Text style={styles.receiptLabel}>Received from</Text>
+                <Text style={styles.receiptValue} numberOfLines={1}>
+                  {receipt.debtorName}
+                </Text>
+              </View>
+              <View style={styles.receiptRow}>
+                <Text style={styles.receiptLabel}>Payment method</Text>
+                <Text style={styles.receiptValue}>
+                  {receipt.provider
+                    ? `${receipt.paymentMethod} · ${receipt.provider}`
+                    : receipt.paymentMethod}
+                </Text>
+              </View>
+              {receipt.reference ? (
+                <View style={styles.receiptRow}>
+                  <Text style={styles.receiptLabel}>Reference</Text>
+                  <Text style={styles.receiptValue} numberOfLines={1}>
+                    {receipt.reference}
+                  </Text>
+                </View>
+              ) : null}
+              {receipt.description ? (
+                <View style={styles.receiptNote}>
+                  <Text style={styles.receiptLabel}>Note</Text>
+                  <Text style={styles.receiptNoteText}>
+                    {receipt.description}
+                  </Text>
+                </View>
+              ) : null}
+
+              <View style={styles.receiptDivider} />
+              <View style={styles.receiptTotalRow}>
+                <Text style={styles.receiptTotalLabel}>Amount paid</Text>
+                <Text style={styles.receiptTotalValue}>
+                  {formatCurrency(receipt.amount)}
+                </Text>
+              </View>
+              <View style={styles.receiptRow}>
+                <Text style={styles.receiptLabel}>Remaining balance</Text>
+                <Text style={styles.receiptValue}>
+                  {formatCurrency(receipt.balanceAfter)}
+                </Text>
+              </View>
+
+              <View style={styles.receiptActions}>
+                <Pressable
+                  onPress={printReceipt}
+                  style={({ pressed }) => [
+                    styles.receiptPrintButton,
+                    pressed && styles.receiptButtonPressed,
+                  ]}
+                >
+                  <Ionicons
+                    name="print-outline"
+                    size={18}
+                    color={colors.navy}
+                  />
+                  <Text style={styles.receiptPrintText}>Print / PDF</Text>
+                </Pressable>
+                <Pressable
+                  onPress={closeReceipt}
+                  style={({ pressed }) => [
+                    styles.receiptDoneButton,
+                    pressed && styles.receiptButtonPressed,
+                  ]}
+                >
+                  <Text style={styles.receiptDoneText}>Done</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+        </View>
+      </Modal>
     </SafeAreaView>
   );
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildPaymentReceiptHtml(receipt) {
+  return `
+    <html>
+      <head><meta charset="utf-8" /></head>
+      <body style="font-family:Arial,sans-serif;max-width:360px;margin:0 auto;padding:24px;color:#20242c;">
+        <h2 style="margin:0;text-align:center;color:#1E3A5F;">${escapeHtml(receipt.storeName)}</h2>
+        <p style="text-align:center;color:#6B7280;font-size:12px;margin:4px 0 16px;">Payment receipt · ${escapeHtml(receipt.date.toLocaleString("en-PH"))}</p>
+        <hr style="border:none;border-top:1px dashed #999;margin:14px 0;" />
+        <p style="font-size:13px;margin:6px 0;">Received from: <b>${escapeHtml(receipt.debtorName)}</b></p>
+        <p style="font-size:13px;margin:6px 0;">Payment method: <b>${escapeHtml(receipt.provider ? `${receipt.paymentMethod} · ${receipt.provider}` : receipt.paymentMethod)}</b></p>
+        ${receipt.reference ? `<p style="font-size:13px;margin:6px 0;">Reference: <b>${escapeHtml(receipt.reference)}</b></p>` : ""}
+        ${receipt.description ? `<p style="font-size:13px;margin:6px 0;">Note: ${escapeHtml(receipt.description)}</p>` : ""}
+        <hr style="border:none;border-top:1px dashed #999;margin:14px 0;" />
+        <h3 style="text-align:right;margin:14px 0 6px;">Amount paid: ${formatCurrency(receipt.amount)}</h3>
+        <p style="text-align:right;font-size:13px;margin:6px 0;">Remaining balance: <b>${formatCurrency(receipt.balanceAfter)}</b></p>
+        <p style="text-align:center;color:#6B7280;font-size:11px;margin-top:24px;">Thank you!</p>
+      </body>
+    </html>`;
 }
 
 function sanitizeAmount(value) {
@@ -837,6 +1012,161 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: spacing.lg,
     backgroundColor: "rgba(0, 0, 0, 0.35)",
+  },
+
+  receiptOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: spacing.lg,
+    backgroundColor: "rgba(0, 0, 0, 0.45)",
+  },
+
+  receiptCard: {
+    width: "100%",
+    maxWidth: 400,
+    backgroundColor: colors.white,
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+
+  receiptIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    alignSelf: "center",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.cream,
+    marginBottom: 10,
+  },
+
+  receiptTitle: {
+    color: colors.navy,
+    fontSize: 20,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+
+  receiptStore: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "800",
+    textAlign: "center",
+    marginTop: 4,
+  },
+
+  receiptMeta: {
+    color: colors.textMuted,
+    fontSize: 11,
+    textAlign: "center",
+    marginTop: 3,
+  },
+
+  receiptDivider: {
+    borderTopWidth: 1,
+    borderStyle: "dashed",
+    borderColor: colors.border,
+    marginVertical: 12,
+  },
+
+  receiptRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    paddingVertical: 5,
+  },
+
+  receiptLabel: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+
+  receiptValue: {
+    flexShrink: 1,
+    color: colors.navy,
+    fontSize: 12,
+    fontWeight: "900",
+    textAlign: "right",
+  },
+
+  receiptNote: {
+    paddingVertical: 5,
+    gap: 4,
+  },
+
+  receiptNoteText: {
+    color: colors.text,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+
+  receiptTotalRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 5,
+    paddingTop: 8,
+  },
+
+  receiptTotalLabel: {
+    color: colors.navy,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+
+  receiptTotalValue: {
+    color: colors.navy,
+    fontSize: 22,
+    fontWeight: "900",
+  },
+
+  receiptActions: {
+    flexDirection: "row",
+    gap: 9,
+    marginTop: 16,
+  },
+
+  receiptPrintButton: {
+    flex: 1,
+    minHeight: 46,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    backgroundColor: colors.cream,
+  },
+
+  receiptPrintText: {
+    color: colors.navy,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  receiptDoneButton: {
+    flex: 1,
+    minHeight: 46,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.sm,
+    backgroundColor: colors.navy,
+  },
+
+  receiptDoneText: {
+    color: colors.white,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+
+  receiptButtonPressed: {
+    opacity: 0.75,
   },
 
   dropdownModal: {
