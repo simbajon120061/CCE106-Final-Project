@@ -7,16 +7,14 @@ import {
   Modal,
   Alert,
   Platform,
-  TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Ionicons } from "@expo/vector-icons";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import Card from "@/components/Card";
 import Button from "@/components/Button";
@@ -38,19 +36,12 @@ import {
 import {
   clearHistory,
   deleteHistoryEntry,
-  exportAllData,
   getDailySalesSummary,
   getLowStockProducts,
   getTransactionHistory,
   getUnpaidBalances,
 } from "@/db/database";
 import { useAuth } from "@/context/AuthContext";
-import {
-  createSpreadsheetCsv,
-  saveSpreadsheetBackup,
-} from "@/lib/spreadsheetBackup";
-
-const BACKUP_SETTINGS_KEY = "track-and-tally:backup-settings:";
 
 export default function ReportsScreen() {
   const db = useSQLiteContext();
@@ -75,11 +66,6 @@ export default function ReportsScreen() {
   const [printDateFilter, setPrintDateFilter] =
     useState("all");
 
-  const [backupLoading, setBackupLoading] = useState(false);
-  const [backupSchedule, setBackupSchedule] = useState("12");
-  const [customBackupHours, setCustomBackupHours] = useState("");
-  const [backupScheduleLoading, setBackupScheduleLoading] = useState(true);
-  const [lastAutoBackupAt, setLastAutoBackupAt] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [historyClearing, setHistoryClearing] = useState(false);
 
@@ -403,165 +389,6 @@ export default function ReportsScreen() {
       ? "All dates"
       : formatDate(printDateFilter);
 
-  const backupIntervalHours = useMemo(() => {
-    if (backupSchedule === "custom") {
-      const hours = Number(customBackupHours);
-      return Number.isFinite(hours) && hours >= 1 ? hours : null;
-    }
-
-    return Number(backupSchedule) || null;
-  }, [backupSchedule, customBackupHours]);
-
-  useEffect(() => {
-    if (!user?.id) return undefined;
-
-    let current = true;
-
-    AsyncStorage.getItem(`${BACKUP_SETTINGS_KEY}${user.id}`)
-      .then((stored) => {
-        if (!current) return;
-        setBackupScheduleLoading(true);
-        if (!stored || !current) return;
-        const settings = JSON.parse(stored);
-        setBackupSchedule(settings.schedule || "12");
-        setCustomBackupHours(settings.customHours || "");
-        setLastAutoBackupAt(settings.lastAutoBackupAt || null);
-      })
-      .catch((error) => {
-        console.error("Could not load backup settings:", error);
-      })
-      .finally(() => {
-        if (current) setBackupScheduleLoading(false);
-      });
-
-    return () => {
-      current = false;
-    };
-  }, [user?.id]);
-
-  useEffect(() => {
-    if (!user?.id || backupScheduleLoading) return;
-
-    AsyncStorage.setItem(
-      `${BACKUP_SETTINGS_KEY}${user.id}`,
-      JSON.stringify({
-        schedule: backupSchedule,
-        customHours: customBackupHours,
-        lastAutoBackupAt,
-      })
-    ).catch((error) => {
-      console.error("Could not save backup settings:", error);
-    });
-  }, [
-    backupSchedule,
-    backupScheduleLoading,
-    customBackupHours,
-    lastAutoBackupAt,
-    user?.id,
-  ]);
-
-  useEffect(() => {
-    if (
-      Platform.OS === "web" ||
-      !user?.id ||
-      backupScheduleLoading ||
-      !backupIntervalHours
-    ) {
-      return undefined;
-    }
-
-    let active = true;
-    const intervalMs = backupIntervalHours * 60 * 60 * 1000;
-
-    const createAutomaticBackup = async () => {
-      const now = Date.now();
-      if (lastAutoBackupAt && now - lastAutoBackupAt < intervalMs) return;
-
-      try {
-        const data = await exportAllData(db, user.id);
-        await saveSpreadsheetBackup(data, "automatic");
-        if (active) setLastAutoBackupAt(now);
-      } catch (error) {
-        console.error("Automatic spreadsheet backup failed:", error);
-      }
-    };
-
-    createAutomaticBackup();
-    const timer = setInterval(createAutomaticBackup, 60 * 60 * 1000);
-
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
-  }, [
-    backupIntervalHours,
-    backupScheduleLoading,
-    db,
-    lastAutoBackupAt,
-    user?.id,
-  ]);
-
-  /*
-   * SPREADSHEET BACKUP
-   */
-  async function handleSaveSpreadsheetBackup() {
-    setBackupLoading(true);
-
-    try {
-      if (!user?.id) {
-        throw new Error("User is not logged in.");
-      }
-
-      const data = await exportAllData(db, user.id);
-
-      if (Platform.OS === "web") {
-        const blob = new Blob([createSpreadsheetCsv(data)], {
-          type: "text/csv;charset=utf-8",
-        });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = "track-and-tally-backup.csv";
-        link.click();
-        URL.revokeObjectURL(url);
-        Alert.alert(
-          "Spreadsheet downloaded",
-          "Upload the downloaded CSV file to Google Drive if you want a cloud copy."
-        );
-        return;
-      }
-
-      const uri = await saveSpreadsheetBackup(data, "manual");
-
-      const canShare = await Sharing.isAvailableAsync();
-      if (!canShare) {
-        Alert.alert(
-          "Spreadsheet saved",
-          "Your CSV backup was saved locally."
-        );
-        return;
-      }
-
-      await Sharing.shareAsync(uri, {
-        dialogTitle: "Save spreadsheet backup",
-        mimeType: "text/csv",
-        UTI: "public.comma-separated-values-text",
-      });
-    } catch (error) {
-      console.error(
-        "Failed to create spreadsheet backup:",
-        error
-      );
-
-      Alert.alert(
-        "Backup failed",
-        error?.message || "Please try again."
-      );
-    } finally {
-      setBackupLoading(false);
-    }
-  }
-
   /*
    * PRINT / PDF REPORT
    */
@@ -649,7 +476,7 @@ export default function ReportsScreen() {
     >
       <TopHeader
         title="Reports"
-        subtitle="Sales, balances, history, and backup"
+        subtitle="Sales, balances, history, and report output"
       />
 
       {/* TAB NAVIGATION */}
@@ -683,8 +510,8 @@ export default function ReportsScreen() {
           />
 
           <TabButton
-            icon="cloud-outline"
-            label="Backup"
+            icon="document-text-outline"
+            label="Print"
             active={tab === "backup"}
             onPress={() =>
               setTab("backup")
@@ -696,7 +523,7 @@ export default function ReportsScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         stickyHeaderIndices={
-          tab === "history" ? [1] : undefined
+          tab === "history" || tab === "sales" ? [1] : undefined
         }
         contentContainerStyle={
           styles.container
@@ -706,18 +533,17 @@ export default function ReportsScreen() {
         {/* SALES */}
         {/* ================================================== */}
 
-        {tab === "sales" && (
-          <>
+        {tab === "sales" && [
             <SectionHeader
+              key="sales-header"
               icon="stats-chart-outline"
               title={`${selectedSalesConfig.label} sales`}
               subtitle={
                 selectedSalesConfig.subtitle
               }
-            />
-
-            {/* SALES PERIOD FILTER */}
+            />,
             <Card
+              key="sales-period-filter"
               style={
                 styles.salesPeriodCard
               }
@@ -822,8 +648,9 @@ export default function ReportsScreen() {
                   </Pressable>
                 ))}
               </View>
-            </Card>
+            </Card>,
 
+            <View key="sales-report-content">
             {/* SALES METRICS */}
             <View
               style={styles.summaryGrid}
@@ -1031,8 +858,8 @@ export default function ReportsScreen() {
                 )}
               </Card>
             )}
-          </>
-        )}
+            </View>,
+          ]}
 
         {/* ================================================== */}
         {/* UNPAID */}
@@ -1455,147 +1282,6 @@ export default function ReportsScreen() {
 
         {tab === "backup" && (
           <>
-            <SectionHeader
-              icon="cloud-upload-outline"
-              title="Backup data"
-              subtitle="Export a copy of your local SQLite records"
-            />
-
-            <Card
-              style={styles.featureCard}
-            >
-              <View
-                style={styles.featureTop}
-              >
-                <View
-                  style={styles.featureIcon}
-                >
-                  <Ionicons
-                    name="cloud-upload-outline"
-                    size={26}
-                    color={
-                      colors.navy
-                    }
-                  />
-                </View>
-
-                <View
-                  style={
-                    styles.featureBadge
-                  }
-                >
-                  <Ionicons
-                    name="shield-checkmark-outline"
-                    size={12}
-                    color={
-                      colors.success
-                    }
-                  />
-
-                  <Text
-                    style={
-                      styles.featureBadgeText
-                    }
-                  >
-                    LOCAL DATA
-                  </Text>
-                </View>
-              </View>
-
-              <Text
-                style={styles.backupTitle}
-              >
-                Spreadsheet backup
-              </Text>
-
-              <Text
-                style={styles.backupText}
-              >
-                Create a CSV spreadsheet with
-                debtors, inventory, sales, and
-                payments. You can save it to Google Drive.
-              </Text>
-
-              <View style={styles.backupScheduleSection}>
-                <Text style={styles.filterLabel}>
-                  Automatic spreadsheet backup
-                </Text>
-
-                <HistoryFilterDropdown
-                  title="Backup frequency"
-                  value={backupSchedule}
-                  options={[
-                    { label: "Every 8 hours", value: "8" },
-                    { label: "Every 12 hours", value: "12" },
-                    { label: "Custom hours", value: "custom" },
-                  ]}
-                  onChange={setBackupSchedule}
-                />
-
-                {backupSchedule === "custom" && (
-                  <TextInput
-                    value={customBackupHours}
-                    onChangeText={setCustomBackupHours}
-                    keyboardType="number-pad"
-                    placeholder="Enter hours (minimum 1)"
-                    placeholderTextColor={colors.textMuted}
-                    style={styles.backupHoursInput}
-                  />
-                )}
-
-                <Text style={styles.backupScheduleHint}>
-                  {backupScheduleLoading
-                    ? "Loading backup preference..."
-                    : backupIntervalHours
-                    ? `Automatic backups are saved locally every ${backupIntervalHours} hour${backupIntervalHours === 1 ? "" : "s"} while the app is active.`
-                    : "Enter a custom backup interval of at least 1 hour."}
-                </Text>
-
-                {lastAutoBackupAt && (
-                  <Text style={styles.backupScheduleHint}>
-                    Last automatic backup: {new Date(lastAutoBackupAt).toLocaleString()}
-                  </Text>
-                )}
-              </View>
-
-              <View
-                style={styles.infoStrip}
-              >
-                <Ionicons
-                  name="information-circle-outline"
-                  size={16}
-                  color={colors.navy}
-                />
-
-                <Text
-                  style={
-                    styles.infoStripText
-                  }
-                >
-                  Tap Save spreadsheet, then choose
-                  Google Drive from the share sheet to
-                  upload a copy.
-                </Text>
-              </View>
-
-              <Button
-                title="Save spreadsheet"
-                onPress={
-                  handleSaveSpreadsheetBackup
-                }
-                loading={
-                  backupLoading
-                }
-                icon={
-                  <Ionicons
-                    name="document-text-outline"
-                    size={18}
-                    color={colors.white}
-                  />
-                }
-              />
-            </Card>
-
             <SectionHeader
               icon="document-text-outline"
               title="Report output"
@@ -3652,37 +3338,6 @@ const styles =
         "center",
     },
 
-    featureBadge: {
-      flexDirection:
-        "row",
-
-      alignItems:
-        "center",
-
-      gap: 4,
-
-      paddingHorizontal: 8,
-
-      paddingVertical: 5,
-
-      borderRadius:
-        radius.full,
-
-      backgroundColor:
-        "rgba(55,140,90,0.10)",
-    },
-
-    featureBadgeText: {
-      fontSize: 8,
-
-      fontWeight: "900",
-
-      color:
-        colors.success,
-
-      letterSpacing: 0.4,
-    },
-
     backupTitle: {
       fontSize: 16,
 
@@ -3703,28 +3358,6 @@ const styles =
       marginTop: 3,
 
       lineHeight: 18,
-    },
-
-    backupScheduleSection: {
-      gap: spacing.xs,
-      marginTop: spacing.sm,
-    },
-
-    backupHoursInput: {
-      minHeight: 46,
-      borderWidth: 1,
-      borderColor: colors.border,
-      borderRadius: radius.md,
-      backgroundColor: colors.cream,
-      paddingHorizontal: 12,
-      color: colors.text,
-      fontSize: 13,
-    },
-
-    backupScheduleHint: {
-      color: colors.textMuted,
-      fontSize: 10,
-      lineHeight: 15,
     },
 
     infoStrip: {

@@ -13,6 +13,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
 import { useSQLiteContext } from "expo-sqlite";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
@@ -30,11 +31,14 @@ import {
 } from "@/db/database";
 import {
   cancelCloudSync,
+  configureCloudBackupInterval,
   getCloudSyncState,
   retryCloudSync,
   subscribeCloudSync,
   syncLinkedStore,
 } from "@/db/cloudSync";
+
+const CLOUD_BACKUP_SETTINGS_KEY = "track-and-tally:backup-settings:";
 
 export default function SettingsScreen() {
   const db = useSQLiteContext();
@@ -55,6 +59,17 @@ export default function SettingsScreen() {
   const [cloudSyncState, setCloudSyncState] = useState(() =>
     getCloudSyncState(user?.id)
   );
+  const [backupSchedule, setBackupSchedule] = useState("12");
+  const [customBackupHours, setCustomBackupHours] = useState("");
+  const [backupSettingsUserId, setBackupSettingsUserId] = useState(null);
+  const [savedBackupFrequency, setSavedBackupFrequency] = useState({
+    schedule: "12",
+    customHours: "",
+  });
+  const [backupFrequencySaving, setBackupFrequencySaving] = useState(false);
+  const [backupFrequencyFeedback, setBackupFrequencyFeedback] = useState(null);
+  const backupScheduleLoading =
+    user?.id != null && backupSettingsUserId !== String(user.id);
   const firebaseAuth = getFirebaseAuth();
   const linkedFirebaseUidForUser =
     linkedLocalUserId === user?.id ? linkedFirebaseUid : null;
@@ -78,6 +93,116 @@ export default function SettingsScreen() {
       }
     });
   }, [user?.id]);
+
+  useEffect(() => {
+    let active = true;
+    if (!user?.id) return undefined;
+
+    AsyncStorage.getItem(`${CLOUD_BACKUP_SETTINGS_KEY}${user.id}`)
+      .then((stored) => {
+        if (!active) return;
+        if (!stored) {
+          setBackupSchedule("12");
+          setCustomBackupHours("");
+          setSavedBackupFrequency({ schedule: "12", customHours: "" });
+          return;
+        }
+        const settings = JSON.parse(stored);
+        const loadedFrequency = {
+          schedule:
+            settings.schedule === "8" ||
+            settings.schedule === "custom"
+              ? settings.schedule
+              : "12",
+          customHours:
+            settings.customHours == null
+              ? ""
+              : String(settings.customHours),
+        };
+        setBackupSchedule(loadedFrequency.schedule);
+        setCustomBackupHours(loadedFrequency.customHours);
+        setSavedBackupFrequency(loadedFrequency);
+      })
+      .catch((error) => {
+        console.error("Could not load cloud backup settings:", error);
+        if (active) {
+          setBackupSchedule("12");
+          setCustomBackupHours("");
+          setSavedBackupFrequency({ schedule: "12", customHours: "" });
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setBackupSettingsUserId(String(user.id));
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [user?.id]);
+
+  const backupFrequencyDirty =
+    backupSchedule !== savedBackupFrequency.schedule ||
+    customBackupHours !== savedBackupFrequency.customHours;
+  const backupFrequencyHours =
+    backupSchedule === "custom"
+      ? Number(customBackupHours)
+      : Number(backupSchedule);
+  const backupFrequencyValid =
+    Number.isFinite(backupFrequencyHours) &&
+    backupFrequencyHours >= 1 &&
+    Number.isFinite(backupFrequencyHours * 60 * 60 * 1000);
+
+  async function saveBackupFrequency() {
+    if (!user?.id || backupFrequencySaving) return;
+
+    const intervalHours =
+      backupSchedule === "custom"
+        ? Number(customBackupHours)
+        : Number(backupSchedule);
+    if (
+      !Number.isFinite(intervalHours) ||
+      intervalHours < 1 ||
+      !Number.isFinite(intervalHours * 60 * 60 * 1000)
+    ) {
+      setBackupFrequencyFeedback({
+        type: "error",
+        message: "Enter a valid custom interval of at least 1 hour.",
+      });
+      return;
+    }
+
+    const frequency = {
+      schedule: backupSchedule,
+      customHours: customBackupHours,
+    };
+    setBackupFrequencySaving(true);
+    setBackupFrequencyFeedback(null);
+    try {
+      await AsyncStorage.setItem(
+        `${CLOUD_BACKUP_SETTINGS_KEY}${user.id}`,
+        JSON.stringify(frequency)
+      );
+      configureCloudBackupInterval(db, user.id, intervalHours);
+      setSavedBackupFrequency(frequency);
+      setBackupFrequencyFeedback({
+        type: "success",
+        message: `Backup frequency saved: every ${intervalHours} hour${
+          intervalHours === 1 ? "" : "s"
+        }.`,
+      });
+    } catch (error) {
+      console.error("Could not save cloud backup frequency:", error);
+      setBackupFrequencyFeedback({
+        type: "error",
+        message:
+          error?.message || "Could not save the backup frequency. Try again.",
+      });
+    } finally {
+      setBackupFrequencySaving(false);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -108,11 +233,10 @@ export default function SettingsScreen() {
     const linkedUid = await getFirebaseUidForUser(db, user.id);
     throwIfCloudBackupCancelled(cloudCancelRequestedRef);
     if (linkedUid && linkedUid !== firebaseUser.uid) {
-      throw new Error(
-        "This local store is linked to a different Firebase account. Sign in with that email address."
-      );
-    }
-    if (!linkedUid) {
+      await setFirebaseUidForUser(db, user.id, firebaseUser.uid);
+      setLinkedFirebaseUid(firebaseUser.uid);
+      setLinkedLocalUserId(user.id);
+    } else if (!linkedUid) {
       await setFirebaseUidForUser(db, user.id, firebaseUser.uid);
       setLinkedFirebaseUid(firebaseUser.uid);
       setLinkedLocalUserId(user.id);
@@ -481,6 +605,127 @@ export default function SettingsScreen() {
                   : "Connect and back up"}
             </Text>
           </Pressable>
+          {linkedFirebaseUidForUser && (
+            <Pressable
+              style={styles.cloudChangeAccount}
+              onPress={() => {
+                setCloudEmail("");
+                setCloudPassword("");
+                setCloudFeedback(null);
+                setCloudModalVisible(true);
+              }}
+              disabled={cloudOperationActive}
+            >
+              <Text style={styles.cloudChangeAccountText}>
+                Change linked email profile
+              </Text>
+            </Pressable>
+          )}
+          <View style={styles.backupSchedule}>
+            <Text style={styles.backupScheduleTitle}>
+              Automatic backup frequency
+            </Text>
+            <View style={styles.backupScheduleOptions}>
+              {[
+                { label: "8 hours", value: "8" },
+                { label: "12 hours", value: "12" },
+                { label: "Custom", value: "custom" },
+              ].map((option) => {
+                const selected = backupSchedule === option.value;
+                return (
+                  <Pressable
+                    key={option.value}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: selected }}
+                    style={[
+                      styles.backupScheduleOption,
+                      selected && styles.backupScheduleOptionSelected,
+                    ]}
+                    onPress={() => setBackupSchedule(option.value)}
+                    disabled={backupScheduleLoading}
+                  >
+                    <Text
+                      style={[
+                        styles.backupScheduleOptionText,
+                        selected && styles.backupScheduleOptionTextSelected,
+                      ]}
+                    >
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {backupSchedule === "custom" && (
+              <TextInput
+                value={customBackupHours}
+                onChangeText={setCustomBackupHours}
+                keyboardType="decimal-pad"
+                placeholder="Enter hours (minimum 1)"
+                placeholderTextColor={colors.textMuted}
+                editable={!backupScheduleLoading}
+                style={styles.backupScheduleInput}
+              />
+            )}
+            <Text style={styles.cloudFootnote}>
+              {backupScheduleLoading
+                ? "Loading backup preference..."
+                : !backupFrequencyValid
+                ? "Enter a custom interval of at least 1 hour."
+                : `Selected frequency: every ${backupFrequencyHours} hour${
+                    backupFrequencyHours === 1 ? "" : "s"
+                  }. ${
+                    backupFrequencyDirty
+                      ? "Save frequency to apply this choice."
+                      : "This is the active schedule."
+                  } Backups run while the app is active; if closed or offline, they are attempted when the app returns with a connection.`}
+            </Text>
+            <Pressable
+              style={({ pressed }) => [
+                styles.backupFrequencySave,
+                (!backupFrequencyDirty ||
+                  !backupFrequencyValid ||
+                  backupFrequencySaving ||
+                  backupScheduleLoading) &&
+                  styles.cloudButtonDisabled,
+                pressed &&
+                  backupFrequencyDirty &&
+                  backupFrequencyValid &&
+                  styles.cloudButtonPressed,
+              ]}
+              onPress={saveBackupFrequency}
+              disabled={
+                !backupFrequencyDirty ||
+                !backupFrequencyValid ||
+                backupFrequencySaving ||
+                backupScheduleLoading
+              }
+            >
+              <Text style={styles.backupFrequencySaveText}>
+                {backupFrequencySaving
+                  ? "Saving frequency..."
+                  : backupFrequencyDirty
+                  ? "Save frequency"
+                  : "Frequency saved"}
+              </Text>
+            </Pressable>
+            {backupFrequencyFeedback && (
+              <Text
+                accessibilityRole={
+                  backupFrequencyFeedback.type === "error"
+                    ? "alert"
+                    : undefined
+                }
+                style={
+                  backupFrequencyFeedback.type === "error"
+                    ? styles.cloudError
+                    : styles.cloudStatus
+                }
+              >
+                {backupFrequencyFeedback.message}
+              </Text>
+            )}
+          </View>
           <Text style={styles.cloudFootnote}>
             Backups are one-way. They do not replace local data or restore data to another device.
           </Text>
@@ -953,9 +1198,15 @@ export default function SettingsScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.cloudModal}>
-            <Text style={styles.cloudModalTitle}>Connect cloud backup</Text>
+            <Text style={styles.cloudModalTitle}>
+              {linkedFirebaseUidForUser
+                ? "Change cloud backup profile"
+                : "Connect cloud backup"}
+            </Text>
             <Text style={styles.cloudModalMessage}>
-              Use Firebase Email/Password. This does not change your local PIN.
+              {linkedFirebaseUidForUser
+                ? "Sign in with another Firebase email to switch this store's backup destination. Your previous cloud backup is not deleted. This does not change your local PIN."
+                : "Use Firebase Email/Password. This does not change your local PIN."}
             </Text>
             {cloudFeedback?.type === "error" && (
               <Text accessibilityRole="alert" style={styles.cloudError}>
@@ -1417,6 +1668,87 @@ const styles = StyleSheet.create({
     color: colors.white,
     fontSize: 13,
     fontWeight: "700",
+  },
+
+  cloudChangeAccount: {
+    alignSelf: "flex-start",
+    paddingVertical: 9,
+  },
+
+  cloudChangeAccountText: {
+    color: colors.navy,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  backupSchedule: {
+    marginTop: 16,
+    gap: 9,
+  },
+
+  backupScheduleTitle: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  backupScheduleOptions: {
+    flexDirection: "row",
+    gap: 7,
+  },
+
+  backupScheduleOption: {
+    flex: 1,
+    minHeight: 40,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    backgroundColor: colors.cream,
+    paddingHorizontal: 5,
+  },
+
+  backupScheduleOptionSelected: {
+    borderColor: colors.navy,
+    backgroundColor: colors.navy,
+  },
+
+  backupScheduleOptionText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+
+  backupScheduleOptionTextSelected: {
+    color: colors.white,
+  },
+
+  backupScheduleInput: {
+    minHeight: 42,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    backgroundColor: colors.cream,
+    paddingHorizontal: 12,
+    color: colors.text,
+    fontSize: 12,
+  },
+
+  backupFrequencySave: {
+    minHeight: 42,
+    justifyContent: "center",
+    alignItems: "center",
+    borderRadius: 10,
+    backgroundColor: colors.navy,
+    paddingHorizontal: 12,
+    marginTop: 2,
+  },
+
+  backupFrequencySaveText: {
+    color: colors.white,
+    fontSize: 12,
+    fontWeight: "800",
   },
 
   cloudFootnote: {

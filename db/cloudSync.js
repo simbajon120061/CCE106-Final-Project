@@ -1,12 +1,77 @@
 import { AppState } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getFirebaseAuth } from "@/firebaseConfig";
 import { syncLocalDataToFirestore } from "@/db/firestore";
 
 const SYNC_DELAY_MS = 800;
+const MAX_TIMER_DELAY_MS = 2_147_000_000;
+const DEFAULT_BACKUP_INTERVAL_HOURS = 12;
+const BACKUP_SETTINGS_KEY = "track-and-tally:backup-settings:";
+const LAST_CLOUD_BACKUP_KEY = "track-and-tally:last-cloud-backup:";
 const listeners = new Set();
 const syncStates = new Map();
 const scheduledJobs = new Map();
 const activeJobs = new Map();
+const periodicBackups = new Map();
+const lastSuccessfulBackups = new Map();
+
+function clearPeriodicTimer(watcher) {
+  if (watcher.timer) {
+    clearTimeout(watcher.timer);
+    watcher.timer = null;
+  }
+}
+
+function armPeriodicBackup(watcher, delayOverride) {
+  clearPeriodicTimer(watcher);
+  if (!watcher.active) return;
+
+  const elapsed = watcher.lastSuccessAt
+    ? Date.now() - watcher.lastSuccessAt
+    : 0;
+  const delay =
+    delayOverride ??
+    Math.max(0, watcher.intervalMs - elapsed);
+  const dueAt = Date.now() + delay;
+
+  watcher.timer = setTimeout(async () => {
+    watcher.timer = null;
+    if (!watcher.active || AppState.currentState !== "active") return;
+    if (Date.now() < dueAt) {
+      armPeriodicBackup(watcher, dueAt - Date.now());
+      return;
+    }
+
+    try {
+      const state = await syncLinkedStore(watcher.db, watcher.localUserId);
+      if (state.status === "synced") {
+        armPeriodicBackup(watcher);
+      } else {
+        armPeriodicBackup(watcher, watcher.intervalMs);
+      }
+    } catch (error) {
+      console.error("Scheduled cloud backup failed:", error);
+      armPeriodicBackup(watcher, watcher.intervalMs);
+    }
+  }, Math.min(delay, MAX_TIMER_DELAY_MS));
+}
+
+function intervalFromSettings(stored) {
+  if (!stored) return DEFAULT_BACKUP_INTERVAL_HOURS;
+  const settings = JSON.parse(stored);
+  if (settings.schedule === "custom") {
+    const customHours = Number(settings.customHours);
+    return Number.isFinite(customHours) &&
+      customHours >= 1 &&
+      Number.isFinite(customHours * 60 * 60 * 1000)
+      ? customHours
+      : DEFAULT_BACKUP_INTERVAL_HOURS;
+  }
+  const hours = Number(settings.schedule);
+  return hours === 8 || hours === 12
+    ? hours
+    : DEFAULT_BACKUP_INTERVAL_HOURS;
+}
 
 function publish(localUserId, state) {
   syncStates.set(String(localUserId), state);
@@ -61,6 +126,21 @@ export async function syncLinkedStore(db, localUserId) {
         ownerName: localUser.owner_name,
       }, cancellation);
       const state = { status: "synced", ...result };
+      const backedUpAt = Date.parse(result.backedUpAt);
+      if (Number.isFinite(backedUpAt)) {
+        lastSuccessfulBackups.set(userId, backedUpAt);
+        const watcher = periodicBackups.get(userId);
+        if (watcher) {
+          watcher.lastSuccessAt = backedUpAt;
+          armPeriodicBackup(watcher);
+        }
+        AsyncStorage.setItem(
+          `${LAST_CLOUD_BACKUP_KEY}${userId}`,
+          String(backedUpAt)
+        ).catch((error) => {
+          console.error("Could not save last cloud backup time:", error);
+        });
+      }
       publish(localUserId, state);
       return state;
     } catch (error) {
@@ -146,11 +226,92 @@ export function retryCloudSync(db, localUserId) {
   });
 }
 
+export function configureCloudBackupInterval(db, localUserId, intervalHours) {
+  const intervalMs = intervalHours * 60 * 60 * 1000;
+  if (
+    localUserId == null ||
+    !Number.isFinite(intervalHours) ||
+    intervalHours < 1 ||
+    !Number.isFinite(intervalMs)
+  ) {
+    return;
+  }
+
+  const userId = String(localUserId);
+  const watcher = periodicBackups.get(userId);
+  if (!watcher) return;
+
+  watcher.db = db;
+  watcher.intervalMs = intervalMs;
+  watcher.intervalConfigured = true;
+  armPeriodicBackup(watcher);
+}
+
 export function watchCloudSyncOnForeground(db, localUserId) {
+  if (localUserId == null) return () => {};
+
+  const userId = String(localUserId);
+  const priorWatcher = periodicBackups.get(userId);
+  if (priorWatcher) {
+    priorWatcher.active = false;
+    clearPeriodicTimer(priorWatcher);
+  }
+
+  const watcher = {
+    db,
+    localUserId,
+    intervalMs: DEFAULT_BACKUP_INTERVAL_HOURS * 60 * 60 * 1000,
+    intervalConfigured: false,
+    lastSuccessAt: lastSuccessfulBackups.get(userId) ?? null,
+    timer: null,
+    active: true,
+  };
+  periodicBackups.set(userId, watcher);
+
+  AsyncStorage.getItem(`${BACKUP_SETTINGS_KEY}${userId}`)
+    .then((stored) => {
+      if (!watcher.active || watcher.intervalConfigured) return;
+      watcher.intervalMs =
+        intervalFromSettings(stored) * 60 * 60 * 1000;
+      armPeriodicBackup(watcher);
+    })
+    .catch((error) => {
+      console.error("Could not load cloud backup interval:", error);
+    });
+
+  AsyncStorage.getItem(`${LAST_CLOUD_BACKUP_KEY}${userId}`)
+    .then((stored) => {
+      if (!watcher.active || watcher.lastSuccessAt != null) return;
+      const timestamp = Number(stored);
+      if (Number.isFinite(timestamp) && timestamp > 0) {
+        watcher.lastSuccessAt = timestamp;
+        lastSuccessfulBackups.set(userId, timestamp);
+      }
+      armPeriodicBackup(watcher);
+    })
+    .catch((error) => {
+      console.error("Could not load last cloud backup time:", error);
+      armPeriodicBackup(watcher);
+    });
+
   const subscription = AppState.addEventListener("change", (state) => {
-    if (state === "active" && localUserId != null) {
+    if (state === "active") {
       scheduleCloudSync(db, localUserId);
+      const elapsed = watcher.lastSuccessAt
+        ? Date.now() - watcher.lastSuccessAt
+        : 0;
+      armPeriodicBackup(
+        watcher,
+        Math.max(SYNC_DELAY_MS, watcher.intervalMs - elapsed)
+      );
     }
   });
-  return () => subscription.remove();
+  return () => {
+    subscription.remove();
+    watcher.active = false;
+    clearPeriodicTimer(watcher);
+    if (periodicBackups.get(userId) === watcher) {
+      periodicBackups.delete(userId);
+    }
+  };
 }
