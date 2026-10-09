@@ -1,5 +1,6 @@
 // db/database.js
 import { scheduleCloudSync } from "@/db/cloudSync";
+import { getSalePricing } from "@/lib/inventory";
 
 const DB_VERSION = 15;
 
@@ -866,18 +867,25 @@ export async function adjustStock(db, id, delta) {
 
 /* ------------------------------- Sales ------------------------------- */
 
-export async function createSale(db, userId, { saleType, debtorId = null, items }
-) {
+export async function createSale(db, userId, { saleType, debtorId = null, items }) {
   if (!items?.length) {
     throw new Error("Cart is empty.");
   }
 
-  const normalizedItems = items.map((item) => ({
-    product: item.product,
-    quantity: Number(item.quantity) || 0,
-  }));
+  // Use the same pricing logic as the Sell and Checkout screens.
+  const normalizedItems = items.map((item) => {
+    const pricing = getSalePricing(item.product, item.saleMode);
+    return {
+      product: item.product,
+      saleMode: item.saleMode,
+      quantity: Number(item.quantity) || 0,
+      unitPrice: Number(pricing.unitPrice) || 0,
+      stockItems: Number(pricing.stockItems) || 1, // stock units used per sold unit
+    };
+  });
+
   const total = normalizedItems.reduce(
-    (sum, item) => sum + item.quantity * Number(item.product.unit_price),
+    (sum, item) => sum + item.quantity * item.unitPrice,
     0
   );
 
@@ -891,14 +899,17 @@ export async function createSale(db, userId, { saleType, debtorId = null, items 
       if (item.quantity <= 0) {
         throw new Error("Quantity must be greater than zero.");
       }
-      if (product.stock_quantity < item.quantity) {
-        throw new Error(`${product.name} only has ${product.stock_quantity} left in stock.`);
+      const needed = item.quantity * item.stockItems;
+      if (product.stock_quantity < needed) {
+        throw new Error(
+          `${product.name} only has ${product.stock_quantity} left in stock.`
+        );
       }
     }
 
     const sale = await db.runAsync(
-      `INSERT INTO sales ( user_id,debtor_id, sale_type, total_amount) VALUES (?, ?, ?, ?)`,
-      [userId,saleType === "credit" ? debtorId : null, saleType, total]
+      `INSERT INTO sales (user_id, debtor_id, sale_type, total_amount) VALUES (?, ?, ?, ?)`,
+      [userId, saleType === "credit" ? debtorId : null, saleType, total]
     );
     saleId = sale.lastInsertRowId;
 
@@ -907,11 +918,11 @@ export async function createSale(db, userId, { saleType, debtorId = null, items 
       await db.runAsync(
         `INSERT INTO sale_items (sale_id, product_id, product_name, unit_price, quantity)
          VALUES (?, ?, ?, ?, ?)`,
-        [saleId, product.id, product.name, product.unit_price, item.quantity]
+        [saleId, product.id, product.name, item.unitPrice, item.quantity]
       );
       await db.runAsync(
         `UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?`,
-        [item.quantity, product.id]
+        [item.quantity * item.stockItems, product.id]
       );
     }
 
@@ -928,13 +939,11 @@ export async function createSale(db, userId, { saleType, debtorId = null, items 
         throw new Error("The selected debtor does not belong to this store.");
       }
       await db.runAsync(
-        `INSERT INTO transactions ( user_id, debtor_id, type, amount, description)
+        `INSERT INTO transactions (user_id, debtor_id, type, amount, description)
          VALUES (?, ?, 'credit', ?, ?)`,
         [userId, debtorId, total, `Credit sale #${saleId}`]
       );
     }
-
-    return saleId;
   });
 
   scheduleCloudSync(db, userId);
