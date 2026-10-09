@@ -1319,6 +1319,250 @@ export async function setFirebaseUidForUser(db, userId, firebaseUid) {
   );
 }
 
+export async function restoreCloudBackup(db, userId, backup) {
+  if (userId == null) {
+    throw new Error("Log in to a local store account before restoring a backup.");
+  }
+  if (!backup?.uid || !backup?.profile?.cloud_backup_at) {
+    throw new Error("The selected Firebase account has no valid cloud backup.");
+  }
+  for (const collectionName of [
+    "debtors",
+    "products",
+    "sales",
+    "transactions",
+  ]) {
+    if (!Array.isArray(backup[collectionName])) {
+      throw new Error(`The cloud backup is missing its ${collectionName} records.`);
+    }
+  }
+
+  const localUser = await db.getFirstAsync(
+    `SELECT id FROM users WHERE id = ?`,
+    [userId]
+  );
+  if (!localUser) {
+    throw new Error("The local store account could not be found.");
+  }
+
+  const debtorIds = new Map();
+  const productIds = new Map();
+  const localId = (id) => {
+    const value = Number(id);
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new Error("The cloud backup contains an invalid record ID.");
+    }
+    return value;
+  };
+  const referenceId = (id, mapping, entityName, optional = false) => {
+    if (id == null && optional) return null;
+    const mapped = mapping.get(String(id));
+    if (mapped == null) {
+      throw new Error(
+        `The cloud backup contains a ${entityName} reference that could not be matched.`
+      );
+    }
+    return mapped;
+  };
+
+  await db.withTransactionAsync(async () => {
+    for (const [collectionName, records] of [
+      ["debtors", backup.debtors],
+      ["products", backup.products],
+      ["sales", backup.sales],
+      ["transactions", backup.transactions],
+    ]) {
+      const incomingIds = new Set(
+        records.map((record) => String(localId(record?.id)))
+      );
+      const existing = await db.getAllAsync(
+        `SELECT id FROM ${collectionName} WHERE user_id IS NULL OR user_id != ?`,
+        [userId]
+      );
+      if (existing.some((record) => incomingIds.has(String(record.id)))) {
+        throw new Error(
+          `The local ${collectionName} IDs conflict with another store on this device. Use an empty device or remove that store before restoring.`
+        );
+      }
+    }
+
+    await db.runAsync(
+      "DELETE FROM cloud_sync_deletions WHERE user_id = ?",
+      [userId]
+    );
+    await db.runAsync(
+      `DELETE FROM transactions WHERE user_id = ?`,
+      [userId]
+    );
+    await db.runAsync(
+      `DELETE FROM sale_items
+       WHERE sale_id IN (SELECT id FROM sales WHERE user_id = ?)`,
+      [userId]
+    );
+    await db.runAsync(`DELETE FROM sales WHERE user_id = ?`, [userId]);
+    await db.runAsync(`DELETE FROM debtors WHERE user_id = ?`, [userId]);
+    await db.runAsync(`DELETE FROM products WHERE user_id = ?`, [userId]);
+
+    for (const debtor of backup.debtors) {
+      if (!debtor?.id || !String(debtor.full_name || "").trim()) {
+        throw new Error(
+          "A debtor in the cloud backup is missing required information."
+        );
+      }
+      await db.runAsync(
+        `INSERT INTO debtors (
+           id, user_id, full_name, contact_number, address, notes, credit_limit,
+           profile_photo_uri, id_photo_uri, created_at, deleted_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+        [
+          localId(debtor.id),
+          userId,
+          String(debtor.full_name).trim(),
+          debtor.contact_number ?? null,
+          debtor.address ?? null,
+          debtor.notes ?? null,
+          Number(debtor.credit_limit) || 0,
+          debtor.created_at ?? new Date().toISOString(),
+          debtor.deleted_at ?? null,
+        ]
+      );
+      debtorIds.set(String(debtor.id), localId(debtor.id));
+    }
+
+    for (const product of backup.products) {
+      if (!product?.id || !String(product.name || "").trim()) {
+        throw new Error(
+          "A product in the cloud backup is missing required information."
+        );
+      }
+      await db.runAsync(
+        `INSERT INTO products (
+           id, user_id, name, category, unit, measurement_value, unit_price,
+           item_price, stock_quantity, low_stock_threshold, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          localId(product.id),
+          userId,
+          String(product.name).trim(),
+          product.category ?? null,
+          product.unit ?? "piece",
+          product.measurement_value ?? null,
+          Number(product.unit_price) || 0,
+          product.item_price == null ? null : Number(product.item_price) || 0,
+          Number(product.stock_quantity) || 0,
+          Number(product.low_stock_threshold) || 0,
+          product.created_at ?? new Date().toISOString(),
+        ]
+      );
+      productIds.set(String(product.id), localId(product.id));
+    }
+
+    for (const sale of backup.sales) {
+      if (!sale?.id || !["cash", "credit"].includes(sale.sale_type)) {
+        throw new Error("A sale in the cloud backup has invalid information.");
+      }
+      await db.runAsync(
+        `INSERT INTO sales (
+           id, user_id, debtor_id, sale_type, total_amount, created_at,
+           customer_name, payment_method, payment_provider, payment_reference
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          localId(sale.id),
+          userId,
+          referenceId(sale.debtor_id, debtorIds, "debtor", true),
+          sale.sale_type,
+          Number(sale.total_amount) || 0,
+          sale.created_at ?? new Date().toISOString(),
+          sale.customer_name ?? null,
+          sale.payment_method ?? "cash",
+          sale.payment_provider ?? null,
+          sale.payment_reference ?? null,
+        ]
+      );
+      if (!Array.isArray(sale.items)) {
+        throw new Error(
+          "A sale in the cloud backup is missing its item records."
+        );
+      }
+      for (const item of sale.items) {
+        if (!item?.product_name) {
+          throw new Error(
+            "A sale item in the cloud backup is missing its product name."
+          );
+        }
+        await db.runAsync(
+          `INSERT INTO sale_items (
+             sale_id, product_id, product_name, unit_price, quantity
+           ) VALUES (?, ?, ?, ?, ?)`,
+          [
+            localId(sale.id),
+            referenceId(item.product_id, productIds, "product", true),
+            item.product_name,
+            Number(item.unit_price) || 0,
+            Number(item.quantity) || 0,
+          ]
+        );
+      }
+    }
+
+    for (const transaction of backup.transactions) {
+      if (
+        !transaction?.id ||
+        !["credit", "payment"].includes(transaction.type)
+      ) {
+        throw new Error(
+          "A transaction in the cloud backup has invalid information."
+        );
+      }
+      await db.runAsync(
+        `INSERT INTO transactions (
+           id, user_id, debtor_id, type, amount, description, product_id,
+           quantity, created_at, payment_method, payment_provider,
+           payment_reference
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          localId(transaction.id),
+          userId,
+          referenceId(transaction.debtor_id, debtorIds, "debtor"),
+          transaction.type,
+          Number(transaction.amount) || 0,
+          transaction.description ?? null,
+          referenceId(transaction.product_id, productIds, "product", true),
+          transaction.quantity ?? null,
+          transaction.created_at ?? new Date().toISOString(),
+          transaction.payment_method ?? null,
+          transaction.payment_provider ?? null,
+          transaction.payment_reference ?? null,
+        ]
+      );
+    }
+
+    await db.runAsync(
+      `UPDATE users
+       SET firebase_uid = ?,
+           store_name = COALESCE(?, store_name),
+           owner_name = COALESCE(?, owner_name)
+       WHERE id = ?`,
+      [
+        backup.uid,
+        backup.profile.store_name ?? null,
+        backup.profile.owner_name ?? null,
+        userId,
+      ]
+    );
+  });
+
+  return {
+    debtors: backup.debtors.length,
+    products: backup.products.length,
+    sales: backup.sales.length,
+    transactions: backup.transactions.length,
+    backedUpAt: backup.profile.cloud_backup_at,
+    storeName: backup.profile.store_name,
+    ownerName: backup.profile.owner_name,
+  };
+}
+
 export async function createUser(db, { phoneNumber, pin, storeName }) {
   const hasEmailColumn = await userColumnExists(db, "email");
   const hasPasswordColumn = await userColumnExists(db, "password");

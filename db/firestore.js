@@ -1,6 +1,8 @@
 import {
   collection,
   doc,
+  getDocFromServer,
+  getDocsFromServer,
   setDoc,
   writeBatch,
 } from "firebase/firestore";
@@ -20,6 +22,45 @@ function throwIfCancelled(cancellation) {
     error.code = "cloud-sync/cancelled";
     throw error;
   }
+}
+
+export async function fetchCloudBackup() {
+  const uid = requireUser();
+  const firebaseDb = getFirebaseDb();
+  const [
+    profileSnapshot,
+    debtorsSnapshot,
+    productsSnapshot,
+    salesSnapshot,
+    transactionsSnapshot,
+  ] = await Promise.all([
+    getDocFromServer(doc(firebaseDb, "users", uid)),
+    getDocsFromServer(collection(firebaseDb, "users", uid, "debtors")),
+    getDocsFromServer(collection(firebaseDb, "users", uid, "products")),
+    getDocsFromServer(collection(firebaseDb, "users", uid, "sales")),
+    getDocsFromServer(collection(firebaseDb, "users", uid, "transactions")),
+  ]);
+
+  const profile = profileSnapshot.data();
+  if (!profile?.cloud_backup_at) {
+    const error = new Error(
+      "No cloud backup was found for this Firebase account."
+    );
+    error.code = "cloud-sync/no-backup";
+    throw error;
+  }
+
+  const records = (snapshot) =>
+    snapshot.docs.map((record) => ({ id: record.id, ...record.data() }));
+
+  return {
+    uid,
+    profile,
+    debtors: records(debtorsSnapshot),
+    products: records(productsSnapshot),
+    sales: records(salesSnapshot),
+    transactions: records(transactionsSnapshot),
+  };
 }
 
 export async function syncLocalDataToFirestore(

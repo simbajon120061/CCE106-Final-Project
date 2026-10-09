@@ -27,8 +27,10 @@ import TopHeader from "@/components/TopHeader";
 import { getFirebaseAuth } from "@/firebaseConfig";
 import {
   getFirebaseUidForUser,
+  restoreCloudBackup,
   setFirebaseUidForUser,
 } from "@/db/database";
+import { fetchCloudBackup } from "@/db/firestore";
 import {
   cancelCloudSync,
   configureCloudBackupInterval,
@@ -43,13 +45,17 @@ const CLOUD_BACKUP_SETTINGS_KEY = "track-and-tally:backup-settings:";
 export default function SettingsScreen() {
   const db = useSQLiteContext();
   const router = useRouter();
-  const { user, logout } = useAuth();
+  const { user, login, logout } = useAuth();
 
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const [cloudModalVisible, setCloudModalVisible] = useState(false);
+  const [cloudAuthPurpose, setCloudAuthPurpose] = useState("backup");
   const [cloudEmail, setCloudEmail] = useState("");
   const [cloudPassword, setCloudPassword] = useState("");
   const [cloudBusy, setCloudBusy] = useState(false);
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [restorePreview, setRestorePreview] = useState(null);
+  const [restoreFeedback, setRestoreFeedback] = useState(null);
   const [cloudCancelRequested, setCloudCancelRequested] = useState(false);
   const [cloudFeedback, setCloudFeedback] = useState(null);
   const cloudCancelRequestedRef = useRef(false);
@@ -263,12 +269,25 @@ export default function SettingsScreen() {
     if (user?.id) cancelCloudSync(user.id);
   }
 
+  function closeCloudAuth() {
+    if (cloudBusy && cloudAuthPurpose === "restore") {
+      cloudCancelRequestedRef.current = true;
+      setCloudCancelRequested(true);
+      setCloudModalVisible(false);
+    } else if (cloudBusy) {
+      cancelCloudBackup();
+    } else {
+      setCloudModalVisible(false);
+    }
+  }
+
   async function handleCloudBackup() {
     if (cloudOperationActive) {
       cancelCloudBackup();
       return;
     }
     if (!cloudUser || linkedFirebaseUidForUser !== cloudUser.uid) {
+      setCloudAuthPurpose("backup");
       setCloudFeedback(null);
       setCloudModalVisible(true);
       return;
@@ -299,7 +318,94 @@ export default function SettingsScreen() {
     }
   }
 
+  async function prepareCloudRestore(firebaseUser) {
+    if (!user?.id) {
+      setCloudFeedback({
+        type: "error",
+        message: "Log in to a local store account before restoring a backup.",
+      });
+      return;
+    }
+
+    setRestoreBusy(true);
+    setCloudFeedback(null);
+    setRestoreFeedback(null);
+    try {
+      const backup = await fetchCloudBackup();
+      if (backup.uid !== firebaseUser.uid) {
+        throw new Error("The signed-in Firebase account changed. Try again.");
+      }
+      setRestorePreview(backup);
+    } catch (error) {
+      console.error("Could not load cloud backup for restore:", error);
+      setCloudFeedback({
+        type: "error",
+        message: getCloudErrorMessage(error),
+      });
+    } finally {
+      setRestoreBusy(false);
+    }
+  }
+
+  function handleCloudRestore() {
+    if (!user?.id || restoreBusy || cloudOperationActive) return;
+    setCloudFeedback(null);
+    setRestorePreview(null);
+    setRestoreFeedback(null);
+    if (cloudUser && linkedFirebaseUidForUser === cloudUser.uid) {
+      prepareCloudRestore(cloudUser);
+      return;
+    }
+
+    setCloudAuthPurpose("restore");
+    setCloudEmail("");
+    setCloudPassword("");
+    setCloudModalVisible(true);
+  }
+
+  async function confirmCloudRestore() {
+    if (!restorePreview || !user?.id || restoreBusy) return;
+    const currentFirebaseUser = getFirebaseAuth().currentUser;
+    if (currentFirebaseUser?.uid !== restorePreview.uid) {
+      setRestorePreview(null);
+      setCloudFeedback({
+        type: "error",
+        message: "The signed-in Firebase account changed. Sign in and try restoring again.",
+      });
+      return;
+    }
+
+    setRestoreBusy(true);
+    setCloudFeedback(null);
+    setRestoreFeedback(null);
+    try {
+      const result = await restoreCloudBackup(db, user.id, restorePreview);
+      setLinkedFirebaseUid(restorePreview.uid);
+      setLinkedLocalUserId(user.id);
+      setRestorePreview(null);
+      try {
+        await login({
+          ...user,
+          storeName: result.storeName || user.storeName,
+          ownerName: result.ownerName || user.ownerName,
+        });
+      } catch (error) {
+        console.error("Could not refresh the local store session after restore:", error);
+      }
+      setCloudFeedback({
+        type: "success",
+        message: `Restore complete: ${result.debtors} debtors, ${result.products} products, ${result.sales} sales, and ${result.transactions} transactions restored.`,
+      });
+    } catch (error) {
+      console.error("Cloud backup restore failed:", error);
+      setRestoreFeedback(getCloudErrorMessage(error));
+    } finally {
+      setRestoreBusy(false);
+    }
+  }
+
   async function handleCloudAuth(action) {
+    if (cloudAuthPurpose === "restore" && action !== "signin") return;
     const email = cloudEmail.trim().toLowerCase();
     if (!email || !cloudPassword) {
       setCloudFeedback({
@@ -326,6 +432,14 @@ export default function SettingsScreen() {
               email,
               cloudPassword
             );
+      if (cloudAuthPurpose === "restore") {
+        if (cloudCancelRequestedRef.current) return;
+        setCloudModalVisible(false);
+        setCloudPassword("");
+        await prepareCloudRestore(credentials.user);
+        return;
+      }
+      throwIfCloudBackupCancelled(cloudCancelRequestedRef);
       const result = await backUpToCloud(credentials.user);
       setCloudModalVisible(false);
       setCloudPassword("");
@@ -580,7 +694,7 @@ export default function SettingsScreen() {
               cloudCancelPending && styles.cloudButtonDisabled,
             ]}
             onPress={handleCloudBackup}
-            disabled={cloudCancelPending}
+            disabled={cloudCancelPending || restoreBusy}
           >
             <Ionicons
               name={
@@ -605,6 +719,28 @@ export default function SettingsScreen() {
                   : "Connect and back up"}
             </Text>
           </Pressable>
+          <Pressable
+            style={({ pressed }) => [
+              styles.cloudRestoreButton,
+              (cloudOperationActive || restoreBusy) &&
+                styles.cloudButtonDisabled,
+              pressed &&
+                !cloudOperationActive &&
+                !restoreBusy &&
+                styles.cloudButtonPressed,
+            ]}
+            onPress={handleCloudRestore}
+            disabled={cloudOperationActive || restoreBusy}
+          >
+            <Ionicons
+              name="cloud-download-outline"
+              size={18}
+              color={colors.navy}
+            />
+            <Text style={styles.cloudRestoreButtonText}>
+              {restoreBusy ? "Restoring backup..." : "Restore from Cloud Backup"}
+            </Text>
+          </Pressable>
           {linkedFirebaseUidForUser && (
             <Pressable
               style={styles.cloudChangeAccount}
@@ -612,6 +748,7 @@ export default function SettingsScreen() {
                 setCloudEmail("");
                 setCloudPassword("");
                 setCloudFeedback(null);
+                setCloudAuthPurpose("backup");
                 setCloudModalVisible(true);
               }}
               disabled={cloudOperationActive}
@@ -727,7 +864,7 @@ export default function SettingsScreen() {
             )}
           </View>
           <Text style={styles.cloudFootnote}>
-            Backups are one-way. They do not replace local data or restore data to another device.
+            Restore requires the Firebase account used for backup. It replaces this local store&apos;s data after confirmation.
           </Text>
           {cloudFeedback && !cloudModalVisible && (
             <Text
@@ -1191,20 +1328,21 @@ export default function SettingsScreen() {
         visible={cloudModalVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => {
-          if (cloudBusy) cancelCloudBackup();
-          else setCloudModalVisible(false);
-        }}
+        onRequestClose={closeCloudAuth}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.cloudModal}>
             <Text style={styles.cloudModalTitle}>
-              {linkedFirebaseUidForUser
+              {cloudAuthPurpose === "restore"
+                ? "Sign in to restore backup"
+                : linkedFirebaseUidForUser
                 ? "Change cloud backup profile"
                 : "Connect cloud backup"}
             </Text>
             <Text style={styles.cloudModalMessage}>
-              {linkedFirebaseUidForUser
+              {cloudAuthPurpose === "restore"
+                ? "Sign in with the Firebase email and password that own the backup. Your local data will not change until you confirm the restore."
+                : linkedFirebaseUidForUser
                 ? "Sign in with another Firebase email to switch this store's backup destination. Your previous cloud backup is not deleted. This does not change your local PIN."
                 : "Use Firebase Email/Password. This does not change your local PIN."}
             </Text>
@@ -1240,10 +1378,14 @@ export default function SettingsScreen() {
               disabled={cloudBusy}
             >
               <Text style={styles.cloudButtonText}>
-                {cloudBusy ? "Please wait..." : "Sign in and back up"}
+                {cloudBusy
+                  ? "Please wait..."
+                  : cloudAuthPurpose === "restore"
+                    ? "Sign in and continue"
+                    : "Sign in and back up"}
               </Text>
             </Pressable>
-            <Pressable
+            {cloudAuthPurpose === "backup" && <Pressable
               style={[
                 styles.cloudButton,
                 styles.cloudCreateButton,
@@ -1255,17 +1397,16 @@ export default function SettingsScreen() {
               <Text style={styles.cloudCreateButtonText}>
                 Create account and back up
               </Text>
-            </Pressable>
+            </Pressable>}
             <Pressable
-              onPress={() => {
-                if (cloudBusy) cancelCloudBackup();
-                else setCloudModalVisible(false);
-              }}
+              onPress={closeCloudAuth}
               style={styles.cloudCancel}
             >
               <Text style={styles.cloudCancelText}>
                 {cloudBusy
-                  ? cloudCancelPending
+                  ? cloudAuthPurpose === "restore"
+                    ? "Cancel sign in"
+                    : cloudCancelPending
                     ? "Cancelling..."
                     : "Cancel backup"
                   : "Cancel"}
@@ -1273,6 +1414,73 @@ export default function SettingsScreen() {
             </Pressable>
           </View>
         </View>
+      </Modal>
+      <Modal
+        visible={!!restorePreview}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!restoreBusy) {
+            setRestorePreview(null);
+            setRestoreFeedback(null);
+          }
+        }}
+      >
+        {restorePreview && (
+          <View style={styles.modalOverlay}>
+            <View style={styles.cloudModal}>
+              <Text style={styles.cloudModalTitle}>Replace local data?</Text>
+              <Text style={styles.cloudModalMessage}>
+                This will replace the data for {user?.storeName || "this store"} on this device with the backup from{" "}
+                {restorePreview.profile.store_name || "your Firebase account"}.
+              </Text>
+              <View style={styles.restoreSummary}>
+                <Text style={styles.restoreSummaryText}>
+                  {restorePreview.debtors.length} debtors · {restorePreview.products.length} products
+                </Text>
+                <Text style={styles.restoreSummaryText}>
+                  {restorePreview.sales.length} sales · {restorePreview.transactions.length} transactions
+                </Text>
+                <Text style={styles.restoreSummaryDate}>
+                  Backup: {new Date(
+                    restorePreview.profile.cloud_backup_at
+                  ).toLocaleString()}
+                </Text>
+              </View>
+              <Text style={styles.cloudModalMessage}>
+                Existing local records for this store will be removed. Photos stored only on the old device cannot be restored.
+              </Text>
+              {restoreFeedback && (
+                <Text accessibilityRole="alert" style={styles.cloudError}>
+                  {restoreFeedback}
+                </Text>
+              )}
+              <Pressable
+                style={[
+                  styles.cloudButton,
+                  styles.restoreConfirmButton,
+                  restoreBusy && styles.cloudButtonDisabled,
+                ]}
+                onPress={confirmCloudRestore}
+                disabled={restoreBusy}
+              >
+                <Text style={styles.cloudButtonText}>
+                  {restoreBusy ? "Restoring..." : "Replace and restore"}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  setRestorePreview(null);
+                  setRestoreFeedback(null);
+                }}
+                style={styles.cloudCancel}
+                disabled={restoreBusy}
+              >
+                <Text style={styles.cloudCancelText}>Cancel</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
       </Modal>
     </SafeAreaView>
   );
@@ -1299,6 +1507,8 @@ function getCloudErrorMessage(error) {
     return "Backup cancelled. Any batches already uploaded remain in the cloud.";
   }
   const messages = {
+    "cloud-sync/no-backup":
+      "No backup was found for this Firebase account. Sign in with the account used for a previous backup.",
     "auth/email-already-in-use":
       "That email already has a Firebase account. Choose Sign in instead.",
     "auth/invalid-email": "Enter a valid email address.",
@@ -1316,9 +1526,11 @@ function getCloudErrorMessage(error) {
     "auth/too-many-requests":
       "Firebase temporarily blocked sign-in attempts. Wait a bit, then retry.",
     "permission-denied":
-      "Firestore denied this backup. Publish the owner-only rules in firestore.rules.",
+      "Firestore denied access to this backup. Publish the owner-only rules in firestore.rules.",
     "firestore/permission-denied":
-      "Firestore denied this backup. Publish the owner-only rules in firestore.rules.",
+      "Firestore denied access to this backup. Publish the owner-only rules in firestore.rules.",
+    "unavailable":
+      "Could not reach the cloud backup. Check your internet connection and retry.",
   };
   const code = error?.code;
   if (code && messages[code]) return messages[code];
@@ -1656,6 +1868,26 @@ const styles = StyleSheet.create({
     gap: 8,
   },
 
+  cloudRestoreButton: {
+    minHeight: 46,
+    marginTop: 9,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.navy,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  cloudRestoreButtonText: {
+    color: colors.navy,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
   cloudButtonPressed: {
     opacity: 0.85,
   },
@@ -1812,6 +2044,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 13,
     color: colors.text,
     marginBottom: 10,
+  },
+
+  restoreSummary: {
+    padding: 12,
+    marginVertical: 6,
+    borderRadius: 12,
+    backgroundColor: "#F4F6F8",
+    gap: 4,
+  },
+
+  restoreSummaryText: {
+    color: colors.navy,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+
+  restoreSummaryDate: {
+    color: colors.textMuted,
+    fontSize: 10,
+    marginTop: 5,
+  },
+
+  restoreConfirmButton: {
+    marginTop: 6,
+    backgroundColor: colors.danger,
   },
 
   cloudCreateButton: {
