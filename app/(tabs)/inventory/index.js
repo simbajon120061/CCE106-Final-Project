@@ -352,19 +352,20 @@ export default function InventoryScreen() {
                   style={styles.productBottom}
                 >
                   <View>
-                    <Text
-                      style={styles.priceLabel}
-                    >
-                      Unit price
-                    </Text>
+                    <Text style={styles.priceLabel}>Selling price</Text>
 
-                    <Text
-                      style={styles.price}
-                    >
+                    <Text style={styles.price}>
                       {formatCurrency(
-                        item.unit_price
+                        Number(item.item_price) > 0 ? item.item_price : item.unit_price
                       )}
                     </Text>
+
+                    {Number(item.item_price) > 0 &&
+                      Number(item.item_price) !== Number(item.unit_price) && (
+                        <Text style={styles.priceLabel}>
+                          Package {formatCurrency(item.unit_price)}
+                        </Text>
+                      )}
                   </View>
 
                   <View
